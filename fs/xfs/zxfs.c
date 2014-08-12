@@ -2,10 +2,14 @@
 #include "xfs.h"
 #include "xfs_sb.h"
 #include "xfs_mount.h"
+#include "xfs_alloc.h"
+#include "xfs_extent_busy.h"
 #include <linux/poll.h>
 
 struct zxfs_globals_t zxfs_globals;
 struct zklog_module_ctx *ZKLOG_THIS_MODULE_CTX = NULL;
+zklog_tag_t ZKLOG_TAG_AGF = 0;
+zklog_tag_t ZKLOG_TAG_BUSY_EXT = 0;
 zklog_tag_t ZKLOG_TAG_DISCARD = 0;
 
 /****** MISC stuff ****************************************/
@@ -16,7 +20,7 @@ zklog_tag_t ZKLOG_TAG_DISCARD = 0;
  * we require umount ASAP.
  * @param flags one or more of SHUTDOWN_XXX flags
  */
-void zxfs_error(struct xfs_mount *mp, int flags)
+void zxfs_error(xfs_mount_t *mp, int flags)
 {
 	struct zxfs_mount *zmp = &mp->m_zxfs;
 	u64 old_flags = 0, new_flags = 0;
@@ -30,7 +34,7 @@ void zxfs_error(struct xfs_mount *mp, int flags)
 	if (old_flags != new_flags) {
 		ZXFS_WARN(1, "XFS(%s): SHUTDOWN!!! old_flags=0x%llX new_flags=0x%llX",
 			      mp->m_fsname, old_flags, new_flags);
-#define PRINT_FLAG(f) if ((new_flags & (f)) && !(old_flags & (f))) zklog(Z_KERR, "XFS(%s): %s", mp->m_fsname, #f)
+#define PRINT_FLAG(f) if ((new_flags & (f)) && !(old_flags & (f))) ZXFSLOG(mp, Z_KERR, "%s", #f)
 		PRINT_FLAG(SHUTDOWN_META_IO_ERROR);
 		PRINT_FLAG(SHUTDOWN_LOG_IO_ERROR);
 		PRINT_FLAG(SHUTDOWN_FORCE_UMOUNT);
@@ -43,19 +47,67 @@ void zxfs_error(struct xfs_mount *mp, int flags)
 }
 
 /*
- * Called very early during the mount sequence, afrer
- * mp->m_fsname is known and underlying block devices have been
- * opened. This function doesn't fail. After this function returns, 
- * it is guaranteeed, that zxfs_mp_fini() will be called.
+ * Called very early during the mount sequence, at the point when:
+ * - mount options have been parsed
+ * - mp->m_fsname is known 
+ * - underlying block devices have been opened
+ * - superblock has been read into mp->m_sb
+ *
+ * This function doesn't fail. 
+ * After this function returns, it is guaranteeed, 
+ * that zxfs_mp_fini() will be called.
  * It can be assumed that mp->m_zxfs memory is zeroed.
  */
-void zxfs_mp_init(struct xfs_mount *mp)
+void zxfs_mp_init(xfs_mount_t *mp)
 {
 	struct zxfs_mount *zmp = &mp->m_zxfs;
 
-	zklog(Z_KINFO, "XFS(%s): INIT", mp->m_fsname);
+	ZXFSLOG(mp, Z_KINFO, "INIT");
 
 	atomic64_set(&zmp->shutdown_flags, 0);
+
+	zmp->kobj_in_use = 0;
+
+	/* 
+	 * set up the discard support.
+	 * we must set it here fully, because recovering
+	 * the log might have to discard/allocate, so all data
+	 * structures must be ready.
+	 */
+	zmp->online_discard = 1; /* default */
+	while (true) {
+		char bdn[BDEVNAME_SIZE] = {'\0'};
+		struct request_queue *q = bdev_get_queue(mp->m_ddev_targp->bt_bdev);
+
+		bdevname(mp->m_ddev_targp->bt_bdev, bdn);
+
+		if (q == NULL) {
+			ZXFSLOG(mp, Z_KWARN, "bdev[%s] queue is NULL", bdn);
+			break;
+		}
+		if (!blk_queue_discard(q)) {
+			ZXFSLOG(mp, Z_KWARN, "bdev[%s] QUEUE_FLAG_DISCARD is off", bdn);
+			break;
+		}
+		ZXFSLOG(mp, Z_KINFO, "bdev[%s] queue: discard_granularity=%u (sb_blocksize=%u)", bdn,
+			q->limits.discard_granularity, mp->m_sb.sb_blocksize);
+		ZXFSLOG(mp, Z_KINFO, "bdev[%s] queue: max_discard_sectors=%u discard_alignment=%u discard_misaligned=%u",
+			bdn, q->limits.max_discard_sectors, q->limits.discard_alignment,
+			q->limits.discard_misaligned);
+		if (q->limits.discard_granularity == 0 ||
+			(q->limits.discard_granularity & (q->limits.discard_granularity - 1)) != 0 || /* must be power of 2 */
+			q->limits.discard_granularity < mp->m_sb.sb_blocksize || /* must be larger than FSB */
+			q->limits.discard_granularity % mp->m_sb.sb_blocksize != 0 || /* granularity must divide nicely by block-size */
+			q->limits.max_discard_sectors < q->limits.discard_granularity ||
+			q->limits.discard_alignment != 0 ||
+			q->limits.discard_misaligned) {
+			ZXFSLOG(mp, Z_KWARN, "bdev[%s] cannot enable discard support", bdn);
+		} else {
+			zmp->discard_gran_bbs = BTOBB(q->limits.discard_granularity);
+			ZXFSLOG(mp, Z_KINFO, "bdev[%s] enable discard support discard_gran_bbs=%u", bdn, zmp->discard_gran_bbs);
+		}
+		break;
+	}
 
 	zxfs_control_init(zmp);
 }
@@ -65,19 +117,22 @@ void zxfs_mp_init(struct xfs_mount *mp)
  * It is not guaranteed that this function will be called,
  * but if yes, then it is guaranteed that zxfs_mp_stop()
  * will be called.
- * Note: this function needs to return inverted error! 
+ * ZXFS_POSITIVE_ERRNO
  */
-int zxfs_mp_start(struct xfs_mount *mp)
+int zxfs_mp_start(xfs_mount_t *mp)
 {
 	int error = 0;
 
-	zklog(Z_KINFO, "XFS(%s): START", mp->m_fsname);
+	ZXFSLOG(mp, Z_KINFO, "START");
 
 	error = zxfs_control_start(mp);
 	if (error) {
-		zklog(Z_KERR, "XFS(%s): zxfs_control_start() error=%d", mp->m_fsname, error);
+		ZXFSLOG(mp, Z_KERR, "zxfs_control_start() error=%d", error);
 		goto out;
 	}
+
+	/* failure is tolerable */
+	zxfs_sysfs_start(mp);
 
 out:
 	return ZXFS_POSITIVE_ERRNO(error);
@@ -89,29 +144,37 @@ out:
  * to undo the effects of zxfs_mp_start(), even if
  * zxfs_mp_start() only partially succeeded.
  */
-void zxfs_mp_stop(struct xfs_mount *mp)
+void zxfs_mp_stop(xfs_mount_t *mp)
 {
-	zklog(Z_KINFO, "XFS(%s): STOP", mp->m_fsname);
+	ZXFSLOG(mp, Z_KINFO, "STOP");
 
+	zxfs_sysfs_stop(mp);
 	zxfs_control_stop(mp);
 }
 
 /*
  * This function undoes the effects of zxfs_mp_init().
- * This function is always guranteeed to be called, even if zxfs_mp_start()
- * only partially succeeded or even has not been called at all.
+ * This function is guranteeed to be called zxfs_mp_init() has been called,
+ * even if zxfs_mp_start() only partially succeeded 
+ * or even has not been called at all.
  */
-void zxfs_mp_fini(struct xfs_mount *mp)
+void zxfs_mp_fini(xfs_mount_t *mp)
 {
 	struct zxfs_mount * zmp = &mp->m_zxfs;
 
-	zklog(Z_KINFO, "XFS(%s): FINI", mp->m_fsname);
+	ZXFSLOG(mp, Z_KINFO, "FINI");
 
 	zxfs_control_fini(zmp);
 }
 
 STATIC void zexit_xfs_globals(void)
 {
+	zxfs_globals_sysfs_exit();
+
+	/* NULL is handled inside */
+	kmem_zone_destroy(zxfs_globals.xfs_extent_busy_zone);
+	kmem_zone_destroy(zxfs_globals.xfs_discard_range_zone);
+
 	zxfs_globals_control_exit();
 }
 
@@ -120,6 +183,27 @@ STATIC int zinit_xfs_globals(void)
 	int error = 0;
 
 	error = zxfs_globals_control_init();
+	if (error)
+		goto out;
+
+	zxfs_globals.xfs_extent_busy_zone = kmem_zone_init_flags(
+		sizeof(struct xfs_extent_busy), "xfs_extent_busy",
+		KM_ZONE_RECLAIM|KM_ZONE_SPREAD, NULL/*ctor*/);
+	if (zxfs_globals.xfs_extent_busy_zone == NULL) {
+		zklog(Z_KERR, "kmem_zone_init_flags(xfs_extent_busy) failed");
+		error = -ENOMEM;
+		goto out;
+	}
+	zxfs_globals.xfs_discard_range_zone = kmem_zone_init_flags(
+		sizeof(struct zxfs_discard_range), "zxfs_discard_range",
+		KM_ZONE_RECLAIM|KM_ZONE_SPREAD, NULL/*ctor*/);
+	if (zxfs_globals.xfs_discard_range_zone == NULL) {
+		zklog(Z_KERR, "kmem_zone_init_flags(zxfs_discard_range) failed");
+		error = -ENOMEM;
+		goto out;
+	}
+
+	error = zxfs_globals_sysfs_init();
 	if (error)
 		goto out;
 
@@ -142,6 +226,16 @@ STATIC int zinit_xfs_klog(void)
 		return error;
 	}
 
+	error = zklog_add_tag("agf", "AGF", Z_KINFO, &ZKLOG_TAG_AGF);
+	if (error != 0) {
+		zklog(Z_KERR, "zklog_add_tag('agf') failed, error=%d", error);
+		goto out;
+	}
+	error = zklog_add_tag("bs", "BusyExtents", Z_KINFO, &ZKLOG_TAG_BUSY_EXT);
+	if (error != 0) {
+		zklog(Z_KERR, "zklog_add_tag('bs') failed, error=%d", error);
+		goto out;
+	}
 	error = zklog_add_tag("dc", "Discard", Z_KINFO, &ZKLOG_TAG_DISCARD);
 	if (error != 0) {
 		zklog(Z_KERR, "zklog_add_tag('tc') failed, error=%d", error);

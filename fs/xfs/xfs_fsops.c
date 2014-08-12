@@ -406,7 +406,12 @@ xfs_growfs_data_private(
 		 * Free the new space.
 		 */
 		error = xfs_free_extent(tp, XFS_AGB_TO_FSB(mp, agno,
+#ifndef CONFIG_XFS_ZADARA		
 			be32_to_cpu(agf->agf_length) - new), new);
+#else /*CONFIG_XFS_ZADARA*/
+			/* freeing the new space does not require discard */
+			be32_to_cpu(agf->agf_length) - new), new, false/*do_discard*/);
+#endif /*CONFIG_XFS_ZADARA*/
 		if (error) {
 			goto error0;
 		}

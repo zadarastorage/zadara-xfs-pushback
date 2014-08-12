@@ -271,6 +271,11 @@ xfs_free_perag(
 		spin_unlock(&mp->m_perag_lock);
 		ASSERT(pag);
 		ASSERT(atomic_read(&pag->pag_ref) == 0);
+#ifdef CONFIG_XFS_ZADARA
+		ZXFS_WARN(!RB_EMPTY_ROOT(&pag->pagb_zdr_tree),
+			"XFS(%s): AG[%u]: pag->pagb_zdr_tree not empty!",
+			mp->m_fsname, agno);
+#endif /*CONFIG_XFS_ZADARA*/
 		call_rcu(&pag->rcu_head, __xfs_free_perag);
 	}
 }

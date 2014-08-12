@@ -3767,8 +3767,13 @@ xfs_bmap_finish(
 	efd = xfs_trans_get_efd(ntp, efi, flist->xbf_count);
 	for (free = flist->xbf_first; free != NULL; free = next) {
 		next = free->xbfi_next;
+#ifndef CONFIG_XFS_ZADARA
 		if ((error = xfs_free_extent(ntp, free->xbfi_startblock,
 				free->xbfi_blockcount))) {
+#else /*CONFIG_XFS_ZADARA*/
+		if ((error = xfs_free_extent(ntp, free->xbfi_startblock,
+				free->xbfi_blockcount, true/*do_discard*/))) {
+#endif /*CONFIG_XFS_ZADARA*/
 			/*
 			 * The bmap free list will be cleaned up at a
 			 * higher level.  The EFI will be canceled when

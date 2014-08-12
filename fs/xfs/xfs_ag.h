@@ -212,6 +212,21 @@ typedef struct xfs_perag {
 #ifdef __KERNEL__
 	spinlock_t	pagb_lock;	/* lock for pagb_tree */
 	struct rb_root	pagb_tree;	/* ordered tree of busy extents */
+#ifdef CONFIG_XFS_ZADARA
+	/* 
+	 * ordered tree of discard-ranges.
+	 * discard range is AG extent, whose [start_daddr:len] is appropriate
+	 * for discard_granularity (and other discard parameters) of the underlying
+	 * block device. this tree holds discard-ranges, which can be discarded
+	 * once the relevant extent-free-intent operations are committed
+	 * (via xlog_cil_committed).
+	 * on each free-space allocation, it is needed to check whether
+	 * the newly-allocated extent overlaps any of the discard-ranges.
+	 * if yes, appropriate discard-ranges need to be adjusted.
+	 * the tree is protected by the same 'pagb_lock'.
+	 */
+	struct rb_root pagb_zdr_tree;
+#endif /*CONFIG_XFS_ZADARA*/
 
 	atomic_t        pagf_fstrms;    /* # of filestreams active in this AG */
 

@@ -106,7 +106,7 @@ void zxfs_control_init(struct zxfs_mount *zmp)
 /* 
  * create & start the control device for this FS.
  */
-int zxfs_control_start(struct xfs_mount *mp)
+int zxfs_control_start(xfs_mount_t *mp)
 {
 	int error = 0;
 	struct zxfs_mount *zmp = &mp->m_zxfs;
@@ -115,18 +115,18 @@ int zxfs_control_start(struct xfs_mount *mp)
 
 	error = alloc_ctl_minor(ctl_dev);
 	if (error) {
-		zklog(Z_KERR, "XFS(%s): alloc_ctl_minor() error=%d", mp->m_fsname, error);
+		ZXFSLOG(mp, Z_KERR, "alloc_ctl_minor() error=%d", error);
 		goto out;
 	}
 
 	cdev_init(&ctl_dev->cdev, &zxfs_globals.ctl_dev_fops);
 	ctl_dev->cdev.owner = THIS_MODULE;
 
-	zklog(Z_KINFO, "XFS(%s): create CTL dev(%d,%d)", mp->m_fsname, MAJOR(ctl_dev->devno), MINOR(ctl_dev->devno));
+	ZXFSLOG(mp, Z_KINFO, "create CTL dev(%d,%d)", MAJOR(ctl_dev->devno), MINOR(ctl_dev->devno));
 
 	error = cdev_add(&ctl_dev->cdev, ctl_dev->devno, 1);
 	if (error != 0) {
-		zklog(Z_KERR, "XFS(%s): cdev_add(devno=(%d,%d)) failed, error=%d", mp->m_fsname, MAJOR(ctl_dev->devno), MINOR(ctl_dev->devno), error);
+		ZXFSLOG(mp, Z_KERR, "cdev_add(devno=(%d,%d)) failed, error=%d", MAJOR(ctl_dev->devno), MINOR(ctl_dev->devno), error);
 		free_ctl_minor(ctl_dev);
 		goto out;
 	}
@@ -134,7 +134,7 @@ int zxfs_control_start(struct xfs_mount *mp)
 	device = device_create(zxfs_globals.ctl_dev_class, NULL/*parent*/, ctl_dev->devno, NULL/*drvdata*/, ZXFS_CONTROL_DEVICE_NAME"-%s", mp->m_fsname);
 	if (IS_ERR(device)) {
 		error = PTR_ERR(device);
-		zklog(Z_KERR, "XFS(%s): device_create(devno=(%d,%d)) failed, errror=%d", mp->m_fsname, MAJOR(ctl_dev->devno), MINOR(ctl_dev->devno), error);
+		ZXFSLOG(mp, Z_KERR, "device_create(devno=(%d,%d)) failed, errror=%d", MAJOR(ctl_dev->devno), MINOR(ctl_dev->devno), error);
 		cdev_del(&ctl_dev->cdev);
 		free_ctl_minor(ctl_dev);
 		goto out;
@@ -149,7 +149,7 @@ out:
 /*
  * Tear down the control device of this FS.
  */
-void zxfs_control_stop(struct xfs_mount *mp)
+void zxfs_control_stop(xfs_mount_t *mp)
 {
 	struct zxfs_mount *zmp = &mp->m_zxfs;
 	struct zxfs_ctl_dev *ctl_dev = &zmp->m_ctl_dev;
@@ -164,11 +164,11 @@ void zxfs_control_stop(struct xfs_mount *mp)
 
 	/* wait until everybody is done with the device */
 	while (atomic_read(&ctl_dev->open_cnt) > 0) {
-		zklog(Z_KWARN, "XFS(%s): control device still open: open_cnt=%d", mp->m_fsname, atomic_read(&ctl_dev->open_cnt));
+		ZXFSLOG(mp, Z_KWARN, "control device still open: open_cnt=%d", atomic_read(&ctl_dev->open_cnt));
 		wait_event_timeout(ctl_dev->wait_cleanup, atomic_read(&ctl_dev->open_cnt) == 0, 30 * HZ);
 	}
 
-	zklog(Z_KDEB1, "XFS(%s): destroy CTL dev(devno=(%d,%d))", mp->m_fsname, MAJOR(ctl_dev->devno), MINOR(ctl_dev->devno));
+	ZXFSLOG(mp, Z_KDEB1, "destroy CTL dev(devno=(%d,%d))", MAJOR(ctl_dev->devno), MINOR(ctl_dev->devno));
 	device_destroy(zxfs_globals.ctl_dev_class, ctl_dev->devno);
 	cdev_del(&ctl_dev->cdev);
 	free_ctl_minor(ctl_dev);
@@ -196,7 +196,7 @@ void zxfs_control_poll_reset(struct zxfs_mount *zmp)
 
 STATIC unsigned int zxfs_control_poll(struct file *filp, struct poll_table_struct *pt)
 {
-	struct xfs_mount *mp = (struct xfs_mount*)filp->private_data;
+	xfs_mount_t *mp = (xfs_mount_t*)filp->private_data;
 	struct zxfs_mount *zmp = &mp->m_zxfs;
 	struct zxfs_ctl_dev *ctl_dev = &zmp->m_ctl_dev;
 	unsigned int mask = 0;
@@ -211,8 +211,7 @@ STATIC unsigned int zxfs_control_poll(struct file *filp, struct poll_table_struc
 			mask = atomic_read(&ctl_dev->poll_mask);
 	}
 
-	zklog(Z_KDEB1, "XFS(%s): poll(devno=(%d,%d)): poll_mask=%#x", 
-		  mp->m_fsname, MAJOR(ctl_dev->devno), MINOR(ctl_dev->devno), mask);
+	ZXFSLOG(mp, Z_KDEB1, "poll(devno=(%d,%d)): poll_mask=%#x", MAJOR(ctl_dev->devno), MINOR(ctl_dev->devno), mask);
 
 	return mask;
 }
@@ -221,15 +220,14 @@ STATIC int zxfs_control_release(struct inode *inode, struct file *filp)
 {
 	struct zxfs_ctl_dev *ctl_dev = container_of(inode->i_cdev, struct zxfs_ctl_dev, cdev);
 	struct zxfs_mount *zmp = container_of(ctl_dev, struct zxfs_mount, m_ctl_dev);
-	struct xfs_mount *mp = container_of(zmp, struct xfs_mount, m_zxfs);
+	xfs_mount_t *mp = container_of(zmp, xfs_mount_t, m_zxfs);
 	int open_cnt = 0;
 
 	ZXFS_BUG_ON(&zmp->m_ctl_dev != ctl_dev);
 
 	open_cnt = atomic_dec_if_positive(&ctl_dev->open_cnt);
 	ZXFS_WARN_ON(open_cnt < 0);
-	zklog(Z_KDEB1, "XFS(%s): release(devno=(%d,%d)): open_cnt=%d", 
-		  mp->m_fsname, MAJOR(ctl_dev->devno), MINOR(ctl_dev->devno), open_cnt);
+	ZXFSLOG(mp, Z_KDEB1, "release(devno=(%d,%d)): open_cnt=%d", MAJOR(ctl_dev->devno), MINOR(ctl_dev->devno), open_cnt);
 	if (open_cnt == 0)
 		wake_up(&ctl_dev->wait_cleanup);
 
@@ -240,19 +238,17 @@ STATIC int zxfs_control_open(struct inode *inode, struct file *filp)
 {
 	struct zxfs_ctl_dev *ctl_dev = container_of(inode->i_cdev, struct zxfs_ctl_dev, cdev);
 	struct zxfs_mount *zmp = container_of(ctl_dev, struct zxfs_mount, m_ctl_dev);
-	struct xfs_mount *mp = container_of(zmp, struct xfs_mount, m_zxfs);
+	xfs_mount_t *mp = container_of(zmp, xfs_mount_t, m_zxfs);
 	int open_cnt = 0;
 
 	if (!ctl_dev->is_alive) {
-		zklog(Z_KWARN, "XFS(%s): open(devno=(%d,%d)): is_alive=%u", 
-			  mp->m_fsname, MAJOR(ctl_dev->devno), MINOR(ctl_dev->devno), ctl_dev->is_alive);
+		ZXFSLOG(mp, Z_KWARN, "open(devno=(%d,%d)): is_alive=%u", MAJOR(ctl_dev->devno), MINOR(ctl_dev->devno), ctl_dev->is_alive);
 		return -XFS_ERROR(ENODEV);
 	}
 
 	filp->private_data = mp;
 	open_cnt = atomic_inc_return(&ctl_dev->open_cnt);
-	zklog(Z_KDEB1, "XFS(%s): open(devno=(%d,%d)): open_cnt=%d", 
-		  mp->m_fsname, MAJOR(ctl_dev->devno), MINOR(ctl_dev->devno), open_cnt);
+	ZXFSLOG(mp, Z_KDEB1, "open(devno=(%d,%d)): open_cnt=%d", MAJOR(ctl_dev->devno), MINOR(ctl_dev->devno), open_cnt);
 	
 	return 0;
 }

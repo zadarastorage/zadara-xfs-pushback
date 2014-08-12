@@ -333,12 +333,18 @@ xlog_cil_committed(
 {
 	struct xfs_cil_ctx	*ctx = args;
 	struct xfs_mount	*mp = ctx->cil->xc_log->l_mp;
+#ifdef CONFIG_XFS_ZADARA
+	LIST_HEAD(dr_list); /* discard-ranges */
+#endif /*CONFIG_XFS_ZADARA*/
 
 	xfs_trans_committed_bulk(ctx->cil->xc_log->l_ailp, ctx->lv_chain,
 					ctx->start_lsn, abort);
 
 	xfs_extent_busy_sort(&ctx->busy_extents);
 	xfs_extent_busy_clear(mp, &ctx->busy_extents,
+#ifdef CONFIG_XFS_ZADARA
+			     &dr_list,/*list of discard-ranges to discard*/				
+#endif /*CONFIG_XFS_ZADARA*/
 			     (mp->m_flags & XFS_MOUNT_DISCARD) && !abort);
 
 	spin_lock(&ctx->cil->xc_cil_lock);
@@ -347,12 +353,20 @@ xlog_cil_committed(
 
 	xlog_cil_free_logvec(ctx->lv_chain);
 
+#ifndef CONFIG_XFS_ZADARA
 	if (!list_empty(&ctx->busy_extents)) {
 		ASSERT(mp->m_flags & XFS_MOUNT_DISCARD);
 
 		xfs_discard_extents(mp, &ctx->busy_extents);
 		xfs_extent_busy_clear(mp, &ctx->busy_extents, false);
 	}
+#else /*CONFIG_XFS_ZADARA*/
+	if (!list_empty(&dr_list)) {
+		zxfs_discard_ranges(mp, &dr_list);
+		zxfs_discard_ranges_clear(mp, &dr_list);
+		ZXFS_BUG_ON(!list_empty(&dr_list));
+	}
+#endif /*CONFIG_XFS_ZADARA*/
 
 	kmem_free(ctx);
 }

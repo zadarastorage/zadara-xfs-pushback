@@ -29,7 +29,7 @@ STATIC long xfs_ioctl_monitor_fs(struct file *filp, void __user *uarg)
 		u64 shutdown_flags = atomic64_read(&zmp->shutdown_flags);
 		if (shutdown_flags) {
 			arg.fs_state |= XFS_ZIOC_FS_STATE_SHUTDOWN;
-			zklog(Z_KWARN, "XFS(%s): POLL - SHUTDOWN", mp->m_fsname);
+			ZXFSLOG(mp, Z_KWARN, "POLL - SHUTDOWN");
 		}
 	}
 

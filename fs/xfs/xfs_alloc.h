@@ -208,7 +208,12 @@ int				/* error */
 xfs_free_extent(
 	struct xfs_trans *tp,	/* transaction pointer */
 	xfs_fsblock_t	bno,	/* starting block number of extent */
+#ifndef CONFIG_XFS_ZADARA
 	xfs_extlen_t	len);	/* length of extent */
+#else /*CONFIG_XFS_ZADARA*/
+	xfs_extlen_t	len,	/* length of extent */
+	bool	do_discard);	/* whether to consider this freed extent for discard */
+#endif /*CONFIG_XFS_ZADARA*/
 
 int					/* error */
 xfs_alloc_lookup_le(

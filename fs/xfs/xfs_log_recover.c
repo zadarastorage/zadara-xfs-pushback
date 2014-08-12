@@ -2962,7 +2962,11 @@ xlog_recover_process_efi(
 
 	for (i = 0; i < efip->efi_format.efi_nextents; i++) {
 		extp = &(efip->efi_format.efi_extents[i]);
+#ifndef CONFIG_XFS_ZADARA
 		error = xfs_free_extent(tp, extp->ext_start, extp->ext_len);
+#else /*CONFIG_XFS_ZADARA*/
+		error = xfs_free_extent(tp, extp->ext_start, extp->ext_len, true/*do_discard*/);
+#endif /*CONFIG_XFS_ZADARA*/
 		if (error)
 			goto abort_error;
 		xfs_trans_log_efd_extent(tp, efdp, extp->ext_start,

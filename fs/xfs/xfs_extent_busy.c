@@ -31,13 +31,23 @@
 #include "xfs_extent_busy.h"
 #include "xfs_trace.h"
 
+#ifdef CONFIG_XFS_ZADARA
+#include "zxfs_extent_busy.c"
+#endif /*CONFIG_XFS_ZADARA*/
+
 void
 xfs_extent_busy_insert(
 	struct xfs_trans	*tp,
 	xfs_agnumber_t		agno,
 	xfs_agblock_t		bno,
 	xfs_extlen_t		len,
+#ifndef CONFIG_XFS_ZADARA	
 	unsigned int		flags)
+#else /*CONFIG_XFS_ZADARA*/
+	unsigned int		flags,
+	xfs_agblock_t		merged_bno,
+	xfs_extlen_t		merged_len)
+#endif /*CONFIG_XFS_ZADARA*/
 {
 	struct xfs_extent_busy	*new;
 	struct xfs_extent_busy	*busyp;
@@ -45,8 +55,14 @@ xfs_extent_busy_insert(
 	struct rb_node		**rbp;
 	struct rb_node		*parent = NULL;
 
+#ifndef CONFIG_XFS_ZADARA
 	new = kmem_zalloc(sizeof(struct xfs_extent_busy), KM_MAYFAIL);
+#else /*CONFIG_XFS_ZADARA*/
+	struct zxfs_discard_range *dr = NULL;
+	new = kmem_zone_zalloc(zxfs_globals.xfs_extent_busy_zone, KM_MAYFAIL);
+#endif /*CONFIG_XFS_ZADARA*/
 	if (!new) {
+		ZXFS_WARN_ONCE(!new, "XFS(%s): cannot alloc xfs_extent_busy", tp->t_mountp->m_fsname);
 		/*
 		 * No Memory!  Since it is now not possible to track the free
 		 * block, make this a synchronous transaction to insure that
@@ -67,6 +83,21 @@ xfs_extent_busy_insert(
 	trace_xfs_extent_busy(tp->t_mountp, agno, bno, len);
 
 	pag = xfs_perag_get(tp->t_mountp, new->agno);
+#ifdef CONFIG_XFS_ZADARA
+	/* initialize our stuff within xfs_extent_busy */
+	INIT_LIST_HEAD(&new->discard_ranges);
+	/* check if we need to track this extent for discard */
+	dr = zxfs_extent_busy_merged_to_discard_range(
+			tp->t_mountp,
+			agno, bno, len,
+			merged_bno, merged_len);
+	if (dr)
+		ZXFSLOG_TAG(tp->t_mountp, Z_KDEB1, ZKLOG_TAG_BUSY_EXT, 
+			"busy[%u:%u:%u] m[%u:%u] disc[%lld:%u] (%u chunks)",
+			agno, bno, len, merged_bno, merged_len,
+			dr->discard_daddr, dr->discard_bbs,
+			dr->discard_bbs / tp->t_mountp->m_zxfs.discard_gran_bbs);
+#endif /*CONFIG_XFS_ZADARA*/
 	spin_lock(&pag->pagb_lock);
 	rbp = &pag->pagb_tree.rb_node;
 	while (*rbp) {
@@ -86,6 +117,28 @@ xfs_extent_busy_insert(
 
 	rb_link_node(&new->rb_node, parent, rbp);
 	rb_insert_color(&new->rb_node, &pag->pagb_tree);
+
+#ifdef CONFIG_XFS_ZADARA
+	/* 
+	 * attach the discard-range to the busy extent
+	 * and register it in the discard tree.
+	 */
+	if (dr) {
+		int error = 0;
+
+		error = __zxfs_discard_range_register(tp->t_mountp, pag, dr);
+		if (error) {
+			/* we will not discard */
+			ZXFSLOG_TAG(tp->t_mountp, Z_KERR, ZKLOG_TAG_BUSY_EXT, 
+				"[%u:%u:%u] discard_range_register([%llu:%u]) failed, will not discard %u chunks",
+				agno, bno, len, dr->discard_daddr, dr->discard_bbs, 
+				dr->discard_bbs / tp->t_mountp->m_zxfs.discard_gran_bbs);
+			zxfs_discard_range_free(dr);
+		} else {
+			list_add_tail(&dr->link, &new->discard_ranges);
+		}
+	}
+#endif /*CONFIG_XFS_ZADARA*/
 
 	list_add(&new->list, &tp->t_busy);
 	spin_unlock(&pag->pagb_lock);
@@ -547,7 +600,30 @@ xfs_extent_busy_clear_one(
 	}
 
 	list_del_init(&busyp->list);
+#ifndef CONFIG_XFS_ZADARA
 	kmem_free(busyp);
+#else /*CONFIG_XFS_ZADARA*/
+
+	assert_spin_locked(&pag->pagb_lock);
+
+	/* 
+	 * if at this point we still have discard-ranges attached,
+	 * we need to deregister and free them.
+	 * this should happen only when XFS log fails or the online
+	 * discard is disabled suddenly.
+	 */
+	while (!list_empty(&busyp->discard_ranges)) {
+		struct zxfs_discard_range *dr = list_first_entry(&busyp->discard_ranges, struct zxfs_discard_range, link);
+
+		ZXFSLOG_TAG(mp, Z_KWARN, ZKLOG_TAG_BUSY_EXT, "busy[%u:%u:%u] drop discard-range[%llu:%u]",
+			pag->pag_agno, busyp->bno, busyp->length,
+			dr->discard_daddr, dr->discard_bbs);
+		list_del_init(&dr->link);
+		__zxfs_discard_range_deregister(mp, pag, dr);
+		zxfs_discard_range_free(dr);
+	}
+	kmem_zone_free(zxfs_globals.xfs_extent_busy_zone, busyp);
+#endif /*CONFIG_XFS_ZADARA*/
 }
 
 /*
@@ -559,6 +635,9 @@ void
 xfs_extent_busy_clear(
 	struct xfs_mount	*mp,
 	struct list_head	*list,
+#ifdef CONFIG_XFS_ZADARA
+	struct list_head	*out_dr_list,
+#endif /*CONFIG_XFS_ZADARA*/
 	bool			do_discard)
 {
 	struct xfs_extent_busy	*busyp, *n;
@@ -576,11 +655,36 @@ xfs_extent_busy_clear(
 			agno = busyp->agno;
 		}
 
+#ifndef CONFIG_XFS_ZADARA
 		if (do_discard && busyp->length &&
 		    !(busyp->flags & XFS_EXTENT_BUSY_SKIP_DISCARD))
 			busyp->flags = XFS_EXTENT_BUSY_DISCARDED;
 		else
 			xfs_extent_busy_clear_one(mp, pag, busyp);
+#else /*CONFIG_XFS_ZADARA*/
+		if (do_discard && ZXFS_ONLINE_DISCARD_ENABLED(mp)) {
+			xfs_agblock_t busy_bno = busyp->bno;
+			xfs_extlen_t busy_len = busyp->length;
+			LIST_HEAD(dr_list);
+
+			ZXFSLOG_TAG(mp, list_empty(&busyp->discard_ranges) ? Z_KDEB2 : Z_KDEB1, ZKLOG_TAG_BUSY_EXT,
+				"busy[%u:%u:%u] COMMIT", agno, busyp->bno, busyp->length);
+
+			/* 
+			 * we need to delete the busy extent from the busy
+			 * extents tree before checking for other busy extents
+			 * overlapping our discard-range.
+			 */
+			list_splice_init(&busyp->discard_ranges, &dr_list);
+			xfs_extent_busy_clear_one(mp, pag, busyp);
+
+			/* fetch all the ranges that we can discard NOW */
+			zxfs_discard_ranges_check(mp, pag, busy_bno, busy_len, &dr_list, out_dr_list);
+			ZXFS_BUG_ON(!list_empty(&dr_list));
+		} else {
+			xfs_extent_busy_clear_one(mp, pag, busyp);
+		}
+#endif /*CONFIG_XFS_ZADARA*/
 	}
 
 	if (pag) {

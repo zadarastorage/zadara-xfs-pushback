@@ -613,7 +613,12 @@ xfs_trans_free(
 	struct xfs_trans	*tp)
 {
 	xfs_extent_busy_sort(&tp->t_busy);
+#ifndef CONFIG_XFS_ZADARA
 	xfs_extent_busy_clear(tp->t_mountp, &tp->t_busy, false);
+#else /*CONFIG_XFS_ZADARA*/
+	/* since we are not discarding, we don't need the dr_list */
+	xfs_extent_busy_clear(tp->t_mountp, &tp->t_busy, NULL/*out_dr_list*/, false);
+#endif /*CONFIG_XFS_ZADARA*/
 
 	atomic_dec(&tp->t_mountp->m_active_trans);
 	if (tp->t_flags & XFS_TRANS_FREEZE_PROT)
@@ -1573,3 +1578,8 @@ xfs_trans_roll(
 	xfs_trans_ijoin(trans, dp, 0);
 	return 0;
 }
+
+#ifdef CONFIG_XFS_ZADARA
+#include "zxfs_trans.c"
+#endif /*CONFIG_XFS_ZADARA*/
+

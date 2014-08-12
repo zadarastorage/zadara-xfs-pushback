@@ -116,7 +116,11 @@ xfs_inobt_free_block(
 	int			error;
 
 	fsbno = XFS_DADDR_TO_FSB(cur->bc_mp, XFS_BUF_ADDR(bp));
+#ifndef CONFIG_XFS_ZADARA
 	error = xfs_free_extent(cur->bc_tp, fsbno, 1);
+#else /*CONFIG_XFS_ZADARA*/
+	error = xfs_free_extent(cur->bc_tp, fsbno, 1, true/*do_discard*/);
+#endif /*CONFIG_XFS_ZADARA*/
 	if (error)
 		return error;
 

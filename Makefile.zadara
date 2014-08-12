@@ -10,7 +10,7 @@ XFS_HDRS          = $(XFS_SRC_DIR)/xfs_fs.h $(XFS_SRC_DIR)/zxfs_fs.h
 
 xfs: $(XFS_KO)
 
-$(XFS_KO): $(XFS_SRC_DIR)/*.c $(XFS_SRC_DIR)/*.h
+$(XFS_KO): $(XFS_SRC_DIR)/*.c $(XFS_SRC_DIR)/*.h  $(XFS_SRC_DIR)/tests/*.c $(XFS_SRC_DIR)/tests/*.h
 	$(MAKE) -C /lib/modules/$(KRELEASE)/build M=$(XFS_SRC_DIR) EXTRA_CFLAGS=-g modules
 
 xfs_direct_install: $(XFS_KO)

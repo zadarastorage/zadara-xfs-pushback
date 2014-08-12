@@ -1054,12 +1054,12 @@ xfs_fs_put_super(
 	xfs_filestream_unmount(mp);
 	xfs_unmountfs(mp);
 
-	xfs_freesb(mp);
-	xfs_icsb_destroy_counters(mp);
-	xfs_destroy_mount_workqueues(mp);
 #ifdef CONFIG_XFS_ZADARA
 	zxfs_mp_fini(mp);
 #endif /*CONFIG_XFS_ZADARA*/
+	xfs_freesb(mp);
+	xfs_icsb_destroy_counters(mp);
+	xfs_destroy_mount_workqueues(mp);
 	xfs_close_devices(mp);
 	xfs_free_fsname(mp);
 	kfree(mp);
@@ -1430,9 +1430,6 @@ xfs_fs_fill_super(
 	error = xfs_open_devices(mp);
 	if (error)
 		goto out_free_fsname;
-#ifdef CONFIG_XFS_ZADARA
-	zxfs_mp_init(mp);
-#endif /*CONFIG_XFS_ZADARA*/
 
 	error = xfs_init_mount_workqueues(mp);
 	if (error)
@@ -1445,6 +1442,9 @@ xfs_fs_fill_super(
 	error = xfs_readsb(mp, flags);
 	if (error)
 		goto out_destroy_counters;
+#ifdef CONFIG_XFS_ZADARA
+	zxfs_mp_init(mp);
+#endif /*CONFIG_XFS_ZADARA*/
 
 	error = xfs_finish_flags(mp);
 	if (error)
@@ -1499,15 +1499,15 @@ xfs_fs_fill_super(
  out_filestream_unmount:
 	xfs_filestream_unmount(mp);
  out_free_sb:
+#ifdef CONFIG_XFS_ZADARA
+	 zxfs_mp_fini(mp);
+#endif /*CONFIG_XFS_ZADARA*/
 	xfs_freesb(mp);
  out_destroy_counters:
 	xfs_icsb_destroy_counters(mp);
 out_destroy_workqueues:
 	xfs_destroy_mount_workqueues(mp);
  out_close_devices:
-#ifdef CONFIG_XFS_ZADARA
-	zxfs_mp_fini(mp);
-#endif /*CONFIG_XFS_ZADARA*/
 	xfs_close_devices(mp);
  out_free_fsname:
 	xfs_free_fsname(mp);

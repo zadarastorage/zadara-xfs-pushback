@@ -533,4 +533,11 @@ extern kmem_zone_t	*xfs_log_item_desc_zone;
 void		xfs_trans_init(struct xfs_mount *);
 int		xfs_trans_roll(struct xfs_trans **, struct xfs_inode *);
 
+#ifdef CONFIG_XFS_ZADARA
+/* Only for unit tests!!! */
+void
+zxfs_trans_free(struct xfs_trans *tp);
+
+#endif /*CONFIG_XFS_ZADARA*/
+
 #endif	/* __XFS_TRANS_H__ */

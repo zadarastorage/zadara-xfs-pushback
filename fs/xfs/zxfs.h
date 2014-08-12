@@ -6,7 +6,24 @@
 
 /*********** zklog stuff **************************/
 #include "/usr/local/include/zadara-iostat/zklog.h"
+extern zklog_tag_t ZKLOG_TAG_AGF;
+extern zklog_tag_t ZKLOG_TAG_BUSY_EXT;
 extern zklog_tag_t ZKLOG_TAG_DISCARD;
+
+#define ZXFSLOG(mp, level, fmt, ...)				zklog(level, "XFS(%s): "fmt, mp->m_fsname, ##__VA_ARGS__)
+#define ZXFSLOG_TAG(mp, level, tag, fmt, ...)		zklog_tag(level, tag, "XFS(%s): "fmt, mp->m_fsname, ##__VA_ARGS__)
+#define ZXFSLOG_RL(mp, level, fmt, ...)				zklog_ratelimited(level, "XFS(%s): "fmt, mp->m_fsname, ##__VA_ARGS__)
+#define ZXFSLOG_TAG_RL(mp, level, tag, fmt, ...)	zklog_tag_ratelimited(level, tag, "XFS(%s): "fmt, mp->m_fsname, ##__VA_ARGS__)
+
+#define ZXFS_SYSFS_PRINT(mp, buf, buf_size, level, tag, fmt, ...)	\
+({																	\
+	ssize_t __size = 0;												\
+	if (buf)														\
+		__size = scnprintf((buf), (buf_size),		 				\
+						fmt"\n", ##__VA_ARGS__);					\
+	ZXFSLOG_TAG((mp), (level), (tag), fmt, ##__VA_ARGS__);			\
+	__size;															\
+})
 
 /************* zadara structures *********************/
 struct zxfs_ctl_dev {
@@ -29,6 +46,22 @@ struct zxfs_mount {
 
 	/* tracks SHUTDOWN_XXX flags */
 	atomic64_t shutdown_flags;
+
+	/* discard granularity in BBs or 0 */
+	xfs_extlen_t discard_gran_bbs;
+
+	/* for sysfs */
+	struct kobject kobj;
+
+	/* flags */
+	unsigned int online_discard:1;
+	/*
+	 * zxfs_sysfs_stop() will call kobject_put() on this kobj,
+	 * and the release function will reset kobj_in_use, indicating
+	 * that all users are done with this kobject and we may proceed
+	 * with the unmount.
+	 */
+	unsigned int kobj_in_use:1;
 };
 
 struct zxfs_globals_t {
@@ -43,6 +76,15 @@ struct zxfs_globals_t {
 	 */
 	struct list_head        ctl_devs;
 	spinlock_t              ctl_devs_lock;
+
+	kmem_zone_t				*xfs_extent_busy_zone; /* for allocation of "struct xfs_extent_busy" */
+	kmem_zone_t				*xfs_discard_range_zone; /* for allocation of struct zxfs_discard_range */
+
+	/* /sys/kernel/fs/xfs */
+	struct kset 			*xfs_kset;
+
+	/* for waiting untul everybody is done on per-FS kobj in umount */
+	wait_queue_head_t kobj_release_wait_q;
 };
 extern struct zxfs_globals_t zxfs_globals;
 
@@ -50,6 +92,7 @@ extern struct zxfs_globals_t zxfs_globals;
 #define ZXFS_BUG_ON(cond) BUG_ON(cond)
 
 #define ZXFS_WARN(condition, format, ...) WARN(condition, format, ##__VA_ARGS__)
+#define ZXFS_WARN_ONCE(condition, format, ...) WARN_ONCE(condition, format, ##__VA_ARGS__)
 
 #define ZXFS_WARN_ON(cond) ZXFS_WARN(cond, "ZXFS WARNING: " #cond)
 
@@ -79,15 +122,25 @@ extern struct zxfs_globals_t zxfs_globals;
  * Most of XFS routines are supposed to return a positive errno.
  * This macro should be used if a routine in question is such,
  * but it calls routines that are "normal" WRT errno.
- * Aall our routines that need to return positive errno, should
+ * All our routines that need to return positive errno, should
  * be clearly commented as such, while all other routines should
  * return "normal" errno.
  */
 #define ZXFS_POSITIVE_ERRNO(error) ((error)<0 ? -(error): (error))
 
+/* xfs_daddr_t is s64, so -1 is a valid s64 */
+#define NULLDADDR ((xfs_daddr_t)-1)
+
+#define ZXFS_DISCARD_ENABLED(mp) (((mp)->m_flags & XFS_MOUNT_DISCARD) && (mp)->m_zxfs.discard_gran_bbs)
+#define ZXFS_ONLINE_DISCARD_ENABLED(mp) (ZXFS_DISCARD_ENABLED(mp) && (mp)->m_zxfs.online_discard)
+
 /*********************************************************/
 /********** function delcarations ************************/
 /*********************************************************/
+
+/********** forward-declarations of xfs structures ***********/
+struct xfs_mount;
+typedef struct xfs_mount xfs_mount_t;
 
 /****** MISC stuff ****************************************/
 
@@ -95,12 +148,12 @@ void xfs_uuid_table_free(void);
 
 long xfs_zioctl(struct file	*filp, unsigned int	cmd, void __user *arg);
 
-void zxfs_error(struct xfs_mount *mp, int flags);
+void zxfs_error(xfs_mount_t *mp, int flags);
 
-void zxfs_mp_init(struct xfs_mount *mp);
-void zxfs_mp_fini(struct xfs_mount *mp);
-void zxfs_mp_stop(struct xfs_mount *mp);
-int zxfs_mp_start(struct xfs_mount *mp);
+void zxfs_mp_init(xfs_mount_t *mp);
+void zxfs_mp_fini(xfs_mount_t *mp);
+void zxfs_mp_stop(xfs_mount_t *mp);
+int zxfs_mp_start(xfs_mount_t *mp);
 
 int zinit_xfs_fs(void);
 void zexit_xfs_fs(void);
@@ -108,9 +161,14 @@ void zexit_xfs_fs(void);
 int zxfs_globals_control_init(void);
 void zxfs_globals_control_exit(void);
 
+int zxfs_globals_sysfs_init(void);
+void zxfs_globals_sysfs_exit(void);
+int zxfs_sysfs_start(xfs_mount_t *mp);
+void zxfs_sysfs_stop(xfs_mount_t *mp); 
+
 void zxfs_control_init(struct zxfs_mount *zmp);
-int zxfs_control_start(struct xfs_mount *mp);
-void zxfs_control_stop(struct xfs_mount *mp);
+int zxfs_control_start(xfs_mount_t *mp);
+void zxfs_control_stop(xfs_mount_t *mp);
 void zxfs_control_fini(struct zxfs_mount *zmp);
 void zxfs_control_poll_wake_up(struct zxfs_mount *zmp, int poll_mask);
 void zxfs_control_poll_reset(struct zxfs_mount *zmp);

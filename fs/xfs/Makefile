@@ -103,5 +103,5 @@ xfs-$(CONFIG_COMPAT)		+= xfs_ioctl32.o
 ####### Zadara ##############
 KBUILD_EXTRA_SYMBOLS := /usr/local/include/zadara-iostat/Module.symvers
 ccflags-y += -DCONFIG_XFS_ZADARA
-xfs-y += zxfs.o zxfs-control.o
+xfs-y += zxfs.o zxfs-control.o zsysfs.o tests/zxfs_extent_busy_tests.o
 

@@ -237,3 +237,8 @@ xfs_discard_extents(
 
 	return 0;
 }
+
+#ifdef CONFIG_XFS_ZADARA
+#include "zxfs_discard.c"
+#endif /*CONFIG_XFS_ZADARA*/
+

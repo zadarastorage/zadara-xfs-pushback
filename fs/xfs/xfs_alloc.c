@@ -427,6 +427,14 @@ xfs_alloc_fixup_trees(
 			return error;
 		XFS_WANT_CORRUPTED_RETURN(i == 1);
 	}
+#ifdef CONFIG_XFS_ZADARA
+	/*
+	 * we are allocating [rbno:rlen], so we need
+	 * to un-mark appropriate discard-ranges as
+	 * available for discard.
+	 */
+	zxfs_discard_range_prevent(cnt_cur->bc_mp, cnt_cur->bc_private.a.agno, rbno, rlen);
+#endif /*CONFIG_XFS_ZADARA*/
 	return 0;
 }
 
@@ -1507,7 +1515,13 @@ xfs_free_ag_extent(
 	xfs_agnumber_t	agno,	/* allocation group number */
 	xfs_agblock_t	bno,	/* starting block number */
 	xfs_extlen_t	len,	/* length of extent */
+#ifndef CONFIG_XFS_ZADARA
 	int		isfl)	/* set if is freelist blocks - no sb acctg */
+#else /*CONFIG_XFS_ZADARA*/
+	int		isfl,	/* set if is freelist blocks - no sb acctg */
+	xfs_agblock_t	*out_nbno,	/* bno of the merged free extent */
+	xfs_extlen_t	*out_nlen)	/* length of the merged free extent */
+#endif /*CONFIG_XFS_ZADARA*/
 {
 	xfs_btree_cur_t	*bno_cur;	/* cursor for by-block btree */
 	xfs_btree_cur_t	*cnt_cur;	/* cursor for by-size btree */
@@ -1647,6 +1661,9 @@ xfs_free_ag_extent(
 		nlen = len + ltlen + gtlen;
 		if ((error = xfs_alloc_update(bno_cur, nbno, nlen)))
 			goto error0;
+		ZXFSLOG_TAG(mp, Z_KDEB2, ZKLOG_TAG_AGF, "[%u:%u:%u] left[%u:%u:%u] right[%u:%u:%u] => [%u:%u:%u]",
+			agno, bno, len, agno, ltbno, ltlen, agno, gtbno, gtlen,
+			agno, nbno, nlen);
 	}
 	/*
 	 * Have only a left contiguous neighbor.
@@ -1673,6 +1690,9 @@ xfs_free_ag_extent(
 		nlen = len + ltlen;
 		if ((error = xfs_alloc_update(bno_cur, nbno, nlen)))
 			goto error0;
+		ZXFSLOG_TAG(mp, Z_KDEB2, ZKLOG_TAG_AGF, "[%u:%u:%u] left[%u:%u:%u] => [%u:%u:%u]",
+			agno, bno, len, agno, ltbno, ltlen,
+			agno, nbno, nlen);
 	}
 	/*
 	 * Have only a right contiguous neighbor.
@@ -1696,6 +1716,9 @@ xfs_free_ag_extent(
 		nlen = len + gtlen;
 		if ((error = xfs_alloc_update(bno_cur, nbno, nlen)))
 			goto error0;
+		ZXFSLOG_TAG(mp, Z_KDEB2, ZKLOG_TAG_AGF, "[%u:%u:%u] right[%u:%u:%u] => [%u:%u:%u]", 
+				 agno, bno, len, agno, gtbno, gtlen,
+				 agno, nbno, nlen);
 	}
 	/*
 	 * No contiguous neighbors.
@@ -1707,6 +1730,7 @@ xfs_free_ag_extent(
 		if ((error = xfs_btree_insert(bno_cur, &i)))
 			goto error0;
 		XFS_WANT_CORRUPTED_GOTO(i == 1, error0);
+		ZXFSLOG_TAG(mp, Z_KDEB2, ZKLOG_TAG_AGF, "[%u:%u:%u] NO NEIGHBOURS!", agno, bno, len);
 	}
 	xfs_btree_del_cursor(bno_cur, XFS_BTREE_NOERROR);
 	bno_cur = NULL;
@@ -1730,6 +1754,11 @@ xfs_free_ag_extent(
 	xfs_perag_put(pag);
 	if (error)
 		goto error0;
+
+#ifdef CONFIG_XFS_ZADARA
+	*out_nbno = nbno;
+	*out_nlen = nlen;
+#endif /*CONFIG_XFS_ZADARA*/
 
 	if (!isfl)
 		xfs_trans_mod_sb(tp, XFS_TRANS_SB_FDBLOCKS, (long)len);
@@ -1912,8 +1941,18 @@ xfs_alloc_fix_freelist(
 		error = xfs_alloc_get_freelist(tp, agbp, &bno, 0);
 		if (error)
 			return error;
+#ifndef CONFIG_XFS_ZADARA
 		if ((error = xfs_free_ag_extent(tp, agbp, args->agno, bno, 1, 1)))
 			return error;
+#else /*CONFIG_XFS_ZADARA*/
+		{
+			xfs_agblock_t merged_bno = NULLAGBLOCK;
+			xfs_extlen_t merged_len = 0;
+			if ((error = xfs_free_ag_extent(tp, agbp, args->agno, bno, 1, 1, &merged_bno, &merged_len)))
+				return error;
+			zxfs_discard_range_insert_nobusy(mp, pag, bno, 1/*len*/, merged_bno, merged_len);
+		}
+#endif /*CONFIG_XFS_ZADARA*/
 		bp = xfs_btree_get_bufs(mp, tp, args->agno, bno, 0);
 		xfs_trans_binval(tp, bp);
 	}
@@ -2270,6 +2309,9 @@ xfs_alloc_read_agf(
 		spin_lock_init(&pag->pagb_lock);
 		pag->pagb_count = 0;
 		pag->pagb_tree = RB_ROOT;
+#ifdef CONFIG_XFS_ZADARA
+		pag->pagb_zdr_tree = RB_ROOT;
+#endif /*CONFIG_XFS_ZADARA*/
 		pag->pagf_init = 1;
 	}
 #ifdef DEBUG
@@ -2513,7 +2555,12 @@ int				/* error */
 xfs_free_extent(
 	xfs_trans_t	*tp,	/* transaction pointer */
 	xfs_fsblock_t	bno,	/* starting block number of extent */
+#ifndef CONFIG_XFS_ZADARA
 	xfs_extlen_t	len)	/* length of extent */
+#else /*CONFIG_XFS_ZADARA*/
+	xfs_extlen_t	len,	/* length of extent */
+	bool do_discard)		/* whether to consider this freed extent for discard */
+#endif /*CONFIG_XFS_ZADARA*/
 {
 	xfs_alloc_arg_t	args;
 	int		error;
@@ -2549,9 +2596,24 @@ xfs_free_extent(
 		goto error0;
 	}
 
+#ifndef CONFIG_XFS_ZADARA
 	error = xfs_free_ag_extent(tp, args.agbp, args.agno, args.agbno, len, 0);
 	if (!error)
 		xfs_extent_busy_insert(tp, args.agno, args.agbno, len, 0);
+#else
+	{
+		xfs_agblock_t merged_bno = NULLAGBLOCK;
+		xfs_extlen_t merged_len = 0;
+		error = xfs_free_ag_extent(tp, args.agbp, args.agno, args.agbno, len, 0, &merged_bno, &merged_len);
+		if (!error) {
+			if (unlikely(!do_discard)) {
+				merged_bno = NULLAGBLOCK;
+				merged_len = 0;
+			}
+			xfs_extent_busy_insert(tp, args.agno, args.agbno, len, 0/*flags*/, merged_bno, merged_len);
+		}
+	}
+#endif /**/
 error0:
 	xfs_perag_put(args.pag);
 	return error;
