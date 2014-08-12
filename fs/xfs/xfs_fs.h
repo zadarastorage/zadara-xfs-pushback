@@ -534,4 +534,8 @@ typedef struct xfs_handle {
 #define BBTOB(bbs)	((bbs) << BBSHIFT)
 #endif
 
+#ifdef CONFIG_XFS_ZADARA
+#include "zxfs_fs.h"
+#endif /*CONFIG_XFS_ZADARA*/
+
 #endif	/* __XFS_FS_H__ */

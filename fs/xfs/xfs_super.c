@@ -1048,12 +1048,18 @@ xfs_fs_put_super(
 {
 	struct xfs_mount	*mp = XFS_M(sb);
 
+#ifdef CONFIG_XFS_ZADARA
+	zxfs_mp_stop(mp);
+#endif /*CONFIG_XFS_ZADARA*/
 	xfs_filestream_unmount(mp);
 	xfs_unmountfs(mp);
 
 	xfs_freesb(mp);
 	xfs_icsb_destroy_counters(mp);
 	xfs_destroy_mount_workqueues(mp);
+#ifdef CONFIG_XFS_ZADARA
+	zxfs_mp_fini(mp);
+#endif /*CONFIG_XFS_ZADARA*/
 	xfs_close_devices(mp);
 	xfs_free_fsname(mp);
 	kfree(mp);
@@ -1424,6 +1430,9 @@ xfs_fs_fill_super(
 	error = xfs_open_devices(mp);
 	if (error)
 		goto out_free_fsname;
+#ifdef CONFIG_XFS_ZADARA
+	zxfs_mp_init(mp);
+#endif /*CONFIG_XFS_ZADARA*/
 
 	error = xfs_init_mount_workqueues(mp);
 	if (error)
@@ -1464,6 +1473,11 @@ xfs_fs_fill_super(
 	error = xfs_mountfs(mp);
 	if (error)
 		goto out_filestream_unmount;
+#ifdef CONFIG_XFS_ZADARA
+	error = zxfs_mp_start(mp);
+	if (error)
+		goto out_unmount;
+#endif /*CONFIG_XFS_ZADARA*/
 
 	root = igrab(VFS_I(mp->m_rootip));
 	if (!root) {
@@ -1491,6 +1505,9 @@ xfs_fs_fill_super(
 out_destroy_workqueues:
 	xfs_destroy_mount_workqueues(mp);
  out_close_devices:
+#ifdef CONFIG_XFS_ZADARA
+	zxfs_mp_fini(mp);
+#endif /*CONFIG_XFS_ZADARA*/
 	xfs_close_devices(mp);
  out_free_fsname:
 	xfs_free_fsname(mp);
@@ -1499,6 +1516,9 @@ out_destroy_workqueues:
 	return -error;
 
  out_unmount:
+#ifdef CONFIG_XFS_ZADARA
+	zxfs_mp_stop(mp);
+#endif /*CONFIG_XFS_ZADARA*/
 	xfs_filestream_unmount(mp);
 	xfs_unmountfs(mp);
 	goto out_free_sb;
@@ -1722,6 +1742,12 @@ init_xfs_fs(void)
 	printk(KERN_INFO XFS_VERSION_STRING " with "
 			 XFS_BUILD_OPTIONS " enabled\n");
 
+#ifdef CONFIG_XFS_ZADARA
+	error = zinit_xfs_fs();
+	if (error)
+		return error;
+#endif /*CONFIG_XFS_ZADARA*/
+
 	xfs_dir_startup();
 
 	error = xfs_init_zones();
@@ -1778,6 +1804,9 @@ init_xfs_fs(void)
  out_destroy_zones:
 	xfs_destroy_zones();
  out:
+#ifdef CONFIG_XFS_ZADARA
+	zexit_xfs_fs();
+#endif /*CONFIG_XFS_ZADARA*/
 	return error;
 }
 
@@ -1793,6 +1822,9 @@ exit_xfs_fs(void)
 	xfs_mru_cache_uninit();
 	xfs_destroy_workqueues();
 	xfs_destroy_zones();
+#ifdef CONFIG_XFS_ZADARA
+	zexit_xfs_fs();
+#endif /*CONFIG_XFS_ZADARA*/
 }
 
 module_init(init_xfs_fs);

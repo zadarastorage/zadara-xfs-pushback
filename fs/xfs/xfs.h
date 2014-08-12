@@ -25,5 +25,8 @@
 #endif
 
 #include "xfs_linux.h"
+#ifdef CONFIG_XFS_ZADARA
+#include "zxfs.h"
+#endif /*CONFIG_XFS_ZADARA*/
 
 #endif	/* __XFS_H__ */

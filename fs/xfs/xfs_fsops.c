@@ -774,6 +774,9 @@ xfs_do_force_shutdown(
 	"%s(0x%x) called from line %d of file %s.  Return address = 0x%p",
 			__func__, flags, lnnum, fname, __return_address);
 	}
+#ifdef CONFIG_XFS_ZADARA
+	zxfs_error(mp, flags);
+#endif /*CONFIG_XFS_ZADARA*/
 	/*
 	 * No need to duplicate efforts.
 	 */

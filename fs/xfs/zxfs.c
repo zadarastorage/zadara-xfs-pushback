@@ -1,0 +1,191 @@
+#ifdef CONFIG_XFS_ZADARA
+#include "xfs.h"
+#include "xfs_sb.h"
+#include "xfs_mount.h"
+#include <linux/poll.h>
+
+struct zxfs_globals_t zxfs_globals;
+struct zklog_module_ctx *ZKLOG_THIS_MODULE_CTX = NULL;
+zklog_tag_t ZKLOG_TAG_DISCARD = 0;
+
+/****** MISC stuff ****************************************/
+
+/*
+ * File system is being shutdown.
+ * We need to notify whoever is polling us, that
+ * we require umount ASAP.
+ * @param flags one or more of SHUTDOWN_XXX flags
+ */
+void zxfs_error(struct xfs_mount *mp, int flags)
+{
+	struct zxfs_mount *zmp = &mp->m_zxfs;
+	u64 old_flags = 0, new_flags = 0;
+
+	/* atomic64_or */
+	do {
+		old_flags = atomic64_read(&zmp->shutdown_flags);
+		new_flags = old_flags | flags;
+	} while (atomic64_cmpxchg(&zmp->shutdown_flags, old_flags, new_flags) != old_flags);
+
+	if (old_flags != new_flags) {
+		ZXFS_WARN(1, "XFS(%s): SHUTDOWN!!! old_flags=0x%llX new_flags=0x%llX",
+			      mp->m_fsname, old_flags, new_flags);
+#define PRINT_FLAG(f) if ((new_flags & (f)) && !(old_flags & (f))) zklog(Z_KERR, "XFS(%s): %s", mp->m_fsname, #f)
+		PRINT_FLAG(SHUTDOWN_META_IO_ERROR);
+		PRINT_FLAG(SHUTDOWN_LOG_IO_ERROR);
+		PRINT_FLAG(SHUTDOWN_FORCE_UMOUNT);
+		PRINT_FLAG(SHUTDOWN_CORRUPT_INCORE);
+		PRINT_FLAG(SHUTDOWN_REMOTE_REQ);
+		PRINT_FLAG(SHUTDOWN_DEVICE_REQ);
+
+		zxfs_control_poll_wake_up(zmp, POLLERR);
+	}
+}
+
+/*
+ * Called very early during the mount sequence, afrer
+ * mp->m_fsname is known and underlying block devices have been
+ * opened. This function doesn't fail. After this function returns, 
+ * it is guaranteeed, that zxfs_mp_fini() will be called.
+ * It can be assumed that mp->m_zxfs memory is zeroed.
+ */
+void zxfs_mp_init(struct xfs_mount *mp)
+{
+	struct zxfs_mount *zmp = &mp->m_zxfs;
+
+	zklog(Z_KINFO, "XFS(%s): INIT", mp->m_fsname);
+
+	atomic64_set(&zmp->shutdown_flags, 0);
+
+	zxfs_control_init(zmp);
+}
+
+/*
+ * Called at the very end of the mount sequence.
+ * It is not guaranteed that this function will be called,
+ * but if yes, then it is guaranteed that zxfs_mp_stop()
+ * will be called.
+ * Note: this function needs to return inverted error! 
+ */
+int zxfs_mp_start(struct xfs_mount *mp)
+{
+	int error = 0;
+
+	zklog(Z_KINFO, "XFS(%s): START", mp->m_fsname);
+
+	error = zxfs_control_start(mp);
+	if (error) {
+		zklog(Z_KERR, "XFS(%s): zxfs_control_start() error=%d", mp->m_fsname, error);
+		goto out;
+	}
+
+out:
+	return ZXFS_POSITIVE_ERRNO(error);
+}
+
+/*
+ * This function is guaranteed to be called if
+ * zxfs_mp_start() has been called, and is supposed
+ * to undo the effects of zxfs_mp_start(), even if
+ * zxfs_mp_start() only partially succeeded.
+ */
+void zxfs_mp_stop(struct xfs_mount *mp)
+{
+	zklog(Z_KINFO, "XFS(%s): STOP", mp->m_fsname);
+
+	zxfs_control_stop(mp);
+}
+
+/*
+ * This function undoes the effects of zxfs_mp_init().
+ * This function is always guranteeed to be called, even if zxfs_mp_start()
+ * only partially succeeded or even has not been called at all.
+ */
+void zxfs_mp_fini(struct xfs_mount *mp)
+{
+	struct zxfs_mount * zmp = &mp->m_zxfs;
+
+	zklog(Z_KINFO, "XFS(%s): FINI", mp->m_fsname);
+
+	zxfs_control_fini(zmp);
+}
+
+STATIC void zexit_xfs_globals(void)
+{
+	zxfs_globals_control_exit();
+}
+
+STATIC int zinit_xfs_globals(void)
+{
+	int error = 0;
+
+	error = zxfs_globals_control_init();
+	if (error)
+		goto out;
+
+out:
+	return error;
+}
+
+STATIC void zexit_xfs_klog(void)
+{
+	zklog_unregister_module();
+}
+
+STATIC int zinit_xfs_klog(void)
+{
+	int error = 0;
+
+	error = zklog_register_module(Z_KINFO);
+	if (error != 0) {
+		ZKLOG_RAW_LOG(KERN_ERR, "zinit_xfs_klog: zklog_register_module() failed, error=%d", error);
+		return error;
+	}
+
+	error = zklog_add_tag("dc", "Discard", Z_KINFO, &ZKLOG_TAG_DISCARD);
+	if (error != 0) {
+		zklog(Z_KERR, "zklog_add_tag('tc') failed, error=%d", error);
+		goto out;
+	}
+
+	error = 0;
+
+out:
+	if (error)
+		zexit_xfs_klog();
+
+	return error;
+}
+
+int zinit_xfs_fs(void)
+{
+	int error = 0;
+
+	error = zinit_xfs_klog();
+	if (error)
+		goto out;
+
+	error = zinit_xfs_globals();
+	if (error)
+		goto out_free_klog;
+
+	return 0;
+
+out_free_klog:
+	zexit_xfs_klog();
+out:
+	return error;
+}
+
+void zexit_xfs_fs(void)
+{
+	/* https://bugzilla.kernel.org/show_bug.cgi?id=48651 */
+	xfs_uuid_table_free();
+
+	zexit_xfs_globals();
+
+	zexit_xfs_klog();
+}
+
+#endif /*CONFIG_XFS_ZADARA*/
+

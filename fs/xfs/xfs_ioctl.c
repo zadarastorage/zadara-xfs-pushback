@@ -1322,6 +1322,11 @@ xfs_ioc_getbmapx(
 	return 0;
 }
 
+#ifdef CONFIG_XFS_ZADARA
+/* Include Zadara code to become part of this file */
+#include "zxfs_ioctl.c"
+#endif /* CONFIG_XFS_ZADARA */
+
 /*
  * Note: some of the ioctl's return positive numbers as a
  * byte count indicating success, such as readlink_by_handle.
@@ -1624,6 +1629,10 @@ xfs_file_ioctl(
 	}
 
 	default:
+#ifdef CONFIG_XFS_ZADARA
+		return xfs_zioctl(filp, cmd, arg);
+#else /*CONFIG_XFS_ZADARA*/
 		return -ENOTTY;
+#endif /*CONFIG_XFS_ZADARA*/
 	}
 }

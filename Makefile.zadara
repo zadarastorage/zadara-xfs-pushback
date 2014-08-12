@@ -1,0 +1,32 @@
+KRELEASE            = $(shell uname -r)
+
+XFS_SRC_DIR       = $(CURDIR)/fs/xfs
+XFS_KO            = $(XFS_SRC_DIR)/xfs.ko
+XFS_HDRS          = $(XFS_SRC_DIR)/xfs_fs.h $(XFS_SRC_DIR)/zxfs_fs.h
+
+
+.PHONY: xfs xfs_direct_install
+
+
+xfs: $(XFS_KO)
+
+$(XFS_KO): $(XFS_SRC_DIR)/*.c $(XFS_SRC_DIR)/*.h
+	$(MAKE) -C /lib/modules/$(KRELEASE)/build M=$(XFS_SRC_DIR) EXTRA_CFLAGS=-g modules
+
+xfs_direct_install: $(XFS_KO)
+	cp --remove-destination $(XFS_KO)    /lib/modules/$(KRELEASE)/kernel/fs/xfs/
+	mkdir -p /usr/local/include/zxfs
+	cp $(XFS_HDRS)                         /usr/local/include/zxfs
+	cp $(XFS_SRC_DIR)/Module.symvers     /usr/local/include/zxfs
+
+xfs_direct_install_tmp: $(XFS_KO)
+	cp $(XFS_KO)                         /tmp
+	[ -h /lib/modules/$(KRELEASE)/kernel/fs/xfs/xfs.ko ] || ln -s /tmp/xfs.ko /lib/modules/$(KRELEASE)/kernel/fs/xfs/xfs.ko
+	mkdir -p /usr/local/include/zxfs
+	cp $(XFS_HDRS)                       /usr/local/include/zxfs
+	cp $(XFS_SRC_DIR)/Module.symvers     /usr/local/include/zxfs
+
+clean:
+	$(MAKE) -C /lib/modules/$(KRELEASE)/build M=$(XFS_SRC_DIR) clean
+
+

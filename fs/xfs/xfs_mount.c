@@ -2543,3 +2543,8 @@ balance_counter:
 }
 
 #endif
+
+#ifdef CONFIG_XFS_ZADARA
+#include "zxfs_mount.c"
+#endif /*CONFIG_XFS_ZADARA*/
+

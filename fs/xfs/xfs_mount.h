@@ -210,6 +210,9 @@ typedef struct xfs_mount {
 	struct workqueue_struct	*m_reclaim_workqueue;
 	struct workqueue_struct	*m_log_workqueue;
 	struct workqueue_struct *m_eofblocks_workqueue;
+#ifdef CONFIG_XFS_ZADARA
+	struct zxfs_mount m_zxfs;
+#endif /*CONFIG_XFS_ZADARA*/
 } xfs_mount_t;
 
 /*
