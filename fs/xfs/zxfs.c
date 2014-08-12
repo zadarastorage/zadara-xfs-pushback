@@ -272,6 +272,10 @@ int zinit_xfs_fs(void)
 	if (error)
 		goto out;
 
+#ifdef MODULE
+	zklog(Z_KINFO, "srcversion=%s", THIS_MODULE->srcversion);
+#endif /*MODULE*/
+
 	error = zinit_xfs_globals();
 	if (error)
 		goto out_free_klog;
