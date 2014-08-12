@@ -22,7 +22,7 @@ static struct kobj_attribute zxfs_global_attr_##name = __ATTR(name.nozsnap, mode
 #define ZXFS_GLOBAL_WO_ATTR_NOZSNAP(name)	ZXFS_GLOBAL_ATTR_NOZSNAP(name, 0200, NULL,        name##_store)
 #define ZXFS_GLOBAL_RW_ATTR_NOZSNAP(name)	ZXFS_GLOBAL_ATTR_NOZSNAP(name, 0644, name##_show, name##_store)
 
-ssize_t unit_tests_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
+static ssize_t unit_tests_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
 	int error = 0;
 	ssize_t size = 0;
@@ -60,7 +60,29 @@ void zxfs_globals_sysfs_exit(void)
 /******** per-FS sysfs stuff ******************/
 static s64 s_agno_for_dump = -1;
 
-ssize_t ext_busy_tree_show(xfs_mount_t *mp, struct zxfs_mount *zmp, char *buf)
+STATIC ssize_t fs_state_show(xfs_mount_t *mp, struct zxfs_mount *zmp, char *buf)
+{
+	ssize_t size = 0;
+	u64 shutdown_flags = atomic64_read(&zmp->shutdown_flags);
+
+	size += scnprintf(buf + size, PAGE_SIZE - size, "Discard-gran BBs:\t%u\n", zmp->discard_gran_bbs);
+	size += scnprintf(buf + size, PAGE_SIZE - size, "Total discard-ranges:\t%d\n", atomic_read(&zmp->total_discard_ranges));
+	size += scnprintf(buf + size, PAGE_SIZE - size, "Online discard enabled:\t%u\n", zmp->online_discard);
+	size += scnprintf(buf + size, PAGE_SIZE - size, "FS is frozen:\t\t%u\n", zmp->is_fs_frozen);
+
+	size += scnprintf(buf + size, PAGE_SIZE - size, "Shutdown flags:\t\t0x%llu\n", shutdown_flags);
+#define PRINT_FLAG(f) if (shutdown_flags & (f)) size += scnprintf(buf + size, PAGE_SIZE - size, "\t"#f"\n")
+	PRINT_FLAG(SHUTDOWN_META_IO_ERROR);
+	PRINT_FLAG(SHUTDOWN_LOG_IO_ERROR);
+	PRINT_FLAG(SHUTDOWN_FORCE_UMOUNT);
+	PRINT_FLAG(SHUTDOWN_CORRUPT_INCORE);
+	PRINT_FLAG(SHUTDOWN_REMOTE_REQ);
+	PRINT_FLAG(SHUTDOWN_DEVICE_REQ);
+
+	return size;
+}
+
+STATIC ssize_t ext_busy_tree_show(xfs_mount_t *mp, struct zxfs_mount *zmp, char *buf)
 {
 	ssize_t size = 0;
 	
@@ -88,7 +110,7 @@ ssize_t ext_busy_tree_show(xfs_mount_t *mp, struct zxfs_mount *zmp, char *buf)
 	return size;
 }
 
-ssize_t ext_busy_tree_store(xfs_mount_t *mp, struct zxfs_mount *zmp, const char *buf, size_t buf_size)
+STATIC ssize_t ext_busy_tree_store(xfs_mount_t *mp, struct zxfs_mount *zmp, const char *buf, size_t buf_size)
 {
 	ssize_t error = 0;
 	s64 agno = -1;
@@ -105,7 +127,7 @@ ssize_t ext_busy_tree_store(xfs_mount_t *mp, struct zxfs_mount *zmp, const char 
 	return error;
 }
 
-ssize_t discard_range_tree_show(xfs_mount_t *mp, struct zxfs_mount *zmp, char *buf)
+STATIC ssize_t discard_range_tree_show(xfs_mount_t *mp, struct zxfs_mount *zmp, char *buf)
 {
 	ssize_t size = 0;
 
@@ -133,7 +155,7 @@ ssize_t discard_range_tree_show(xfs_mount_t *mp, struct zxfs_mount *zmp, char *b
 	return size;
 }
 
-ssize_t discard_range_tree_store(xfs_mount_t *mp, struct zxfs_mount *zmp, const char *buf, size_t buf_size)
+STATIC ssize_t discard_range_tree_store(xfs_mount_t *mp, struct zxfs_mount *zmp, const char *buf, size_t buf_size)
 {
 	ssize_t error = 0;
 	s64 agno = -1;
@@ -150,7 +172,7 @@ ssize_t discard_range_tree_store(xfs_mount_t *mp, struct zxfs_mount *zmp, const 
 	return error;
 }
 
-ssize_t online_discard_show(xfs_mount_t *mp, struct zxfs_mount *zmp, char *buf)
+STATIC ssize_t online_discard_show(xfs_mount_t *mp, struct zxfs_mount *zmp, char *buf)
 {
 	ssize_t size = 0;
 	unsigned int enabled = zmp->online_discard;
@@ -160,7 +182,7 @@ ssize_t online_discard_show(xfs_mount_t *mp, struct zxfs_mount *zmp, char *buf)
 	return size;
 }
 
-ssize_t online_discard_store(xfs_mount_t *mp, struct zxfs_mount *zmp, const char *buf, size_t buf_size)
+STATIC ssize_t online_discard_store(xfs_mount_t *mp, struct zxfs_mount *zmp, const char *buf, size_t buf_size)
 {
 	ssize_t error = 0;
 	unsigned int enabled = 0;
@@ -195,11 +217,13 @@ struct zxfs_attr {
 
 #define ZXFS_ATTR_IN_LIST(name) &zxfs_attr_##name.attr
 
+ZXFS_RO_ATTR(fs_state);
 ZXFS_RW_ATTR(online_discard);
 ZXFS_RW_ATTR_NOZSNAP(ext_busy_tree);
 ZXFS_RW_ATTR_NOZSNAP(discard_range_tree);
 
 static struct attribute* zxfs_sysfs_attrs[] = {
+	ZXFS_ATTR_IN_LIST(fs_state),
 	ZXFS_ATTR_IN_LIST(online_discard),
 	ZXFS_ATTR_IN_LIST(ext_busy_tree),
 	ZXFS_ATTR_IN_LIST(discard_range_tree),

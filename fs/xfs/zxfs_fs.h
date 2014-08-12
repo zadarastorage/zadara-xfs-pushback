@@ -13,11 +13,16 @@ struct xfs_ioctl_monitor_fs_args {
 	__u64 fs_state;                              /* out */
 };
 
+struct xfs_ioctl_refresh_discard_gran_args {
+	__u32 discard_gran_sectors;                  /* out */
+};
+
 /********** Zadara IOCTLs go here ***************/
+/* ATTENTION! "nr" can go only up to 255 */
 enum {
 	XFS_ZIOC_FIRST_NR = 200,
 };
 
 #define XFS_ZIOC_MONITOR_FS			    _IOWR('X', XFS_ZIOC_FIRST_NR +  0, struct xfs_ioctl_monitor_fs_args)
-
+#define XFS_ZIOC_REFRESH_DISCARD_GRAN    _IOR('X', XFS_ZIOC_FIRST_NR +  1, struct xfs_ioctl_refresh_discard_gran_args)
 

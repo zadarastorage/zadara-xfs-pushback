@@ -88,6 +88,7 @@ __zxfs_discard_range_register(
 	if (error == 0) {
 		rb_link_node(&dr->dr_tree_node, parent, rbp);
 		rb_insert_color(&dr->dr_tree_node, &pag->pagb_zdr_tree);
+		atomic_inc(&mp->m_zxfs.total_discard_ranges);
 	}
 
 	return error;
@@ -104,8 +105,14 @@ __zxfs_discard_range_deregister(
 	xfs_perag_t *pag,
 	struct zxfs_discard_range *dr)
 {
+	int after_dec = 0;
+
 	assert_spin_locked(&pag->pagb_lock);
 	rb_erase(&dr->dr_tree_node, &pag->pagb_zdr_tree);
+
+	after_dec = atomic_dec_return(&mp->m_zxfs.total_discard_ranges);
+	ZXFS_WARN_ONCE(after_dec < 0, "XFS(%s): AG[%u]: dr[%llu:%u] yields total_discard_ranges=%d after deletion",
+		mp->m_fsname, pag->pag_agno, dr->discard_daddr, dr->discard_bbs, after_dec);
 }
 
 /*

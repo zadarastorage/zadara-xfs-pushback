@@ -50,10 +50,17 @@ struct zxfs_mount {
 	/* discard granularity in BBs or 0 */
 	xfs_extlen_t discard_gran_bbs;
 
+	/* 
+	 * total amount of "struct zxfs_discard_range" 
+	 * that we have in all AGs right now.
+	 */
+	atomic_t total_discard_ranges;
+
 	/* for sysfs */
 	struct kobject kobj;
 
 	/* flags */
+	unsigned int is_fs_frozen:1;
 	unsigned int online_discard:1;
 	/*
 	 * zxfs_sysfs_stop() will call kobject_put() on this kobj,
@@ -150,6 +157,7 @@ long xfs_zioctl(struct file	*filp, unsigned int	cmd, void __user *arg);
 
 void zxfs_error(xfs_mount_t *mp, int flags);
 
+void zxfs_set_discard_gran(xfs_mount_t *mp);
 void zxfs_mp_init(xfs_mount_t *mp);
 void zxfs_mp_fini(xfs_mount_t *mp);
 void zxfs_mp_stop(xfs_mount_t *mp);

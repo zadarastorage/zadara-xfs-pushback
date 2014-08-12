@@ -1314,10 +1314,24 @@ xfs_fs_freeze(
 	struct super_block	*sb)
 {
 	struct xfs_mount	*mp = XFS_M(sb);
+#ifdef CONFIG_XFS_ZADARA
+	int error = 0;
+	ZXFSLOG(mp, Z_KNOTE, "FREEZE...");
+	ZXFS_WARN(mp->m_zxfs.is_fs_frozen, "XFS(%s): already frozen!", mp->m_fsname);
+#endif /*CONFIG_XFS_ZADARA*/
 
 	xfs_save_resvblks(mp);
 	xfs_quiesce_attr(mp);
+
+#ifndef CONFIG_XFS_ZADARA
 	return -xfs_fs_log_dummy(mp);
+#else /*CONFIG_XFS_ZADARA*/
+	error = -xfs_fs_log_dummy(mp);
+	ZXFSLOG(mp, error == 0 ? Z_KNOTE : Z_KERR, "FREEZE DONE ret=%d", error);
+	if (error == 0)
+		mp->m_zxfs.is_fs_frozen = 1;
+	return error;
+#endif /*CONFIG_XFS_ZADARA*/
 }
 
 STATIC int
@@ -1326,8 +1340,17 @@ xfs_fs_unfreeze(
 {
 	struct xfs_mount	*mp = XFS_M(sb);
 
+#ifdef CONFIG_XFS_ZADARA
+	ZXFSLOG(mp, Z_KNOTE, "UNFREEZE...");
+	ZXFS_WARN(!mp->m_zxfs.is_fs_frozen, "XFS(%s): not frozen!", mp->m_fsname);
+#endif /*CONFIG_XFS_ZADARA*/
+
 	xfs_restore_resvblks(mp);
 	xfs_log_work_queue(mp);
+#ifdef CONFIG_XFS_ZADARA
+	ZXFSLOG(mp, Z_KNOTE, "UNFREEZE DONE");
+	mp->m_zxfs.is_fs_frozen = 0;
+#endif /*CONFIG_XFS_ZADARA*/
 	return 0;
 }
 

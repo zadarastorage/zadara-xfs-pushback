@@ -40,11 +40,46 @@ out:
 	return error;
 }
 
+STATIC long xfs_ioctl_refresh_discard_gran(struct file *filp, void __user *uarg)
+{
+	int error = 0;
+	struct xfs_ioctl_refresh_discard_gran_args arg;
+	struct inode *inode = filp->f_path.dentry->d_inode;
+	struct xfs_mount *mp = XFS_I(inode)->i_mount;
+	struct zxfs_mount *zmp = &mp->m_zxfs;
+	int frozen = SB_UNFROZEN;
+	int total_discard_ranges = atomic_read(&zmp->total_discard_ranges);
+
+	ZXFSLOG(mp, Z_KINFO, "REFRESH DISCARD GRAN");
+
+	/* FS needs to be frozen */
+	frozen = mp->m_super->s_writers.frozen;
+	if (frozen != SB_FREEZE_COMPLETE ||
+		!zmp->is_fs_frozen ||
+		total_discard_ranges > 0) {
+		ZXFSLOG(mp, Z_KWARN, "frozen=%d(SB_FREEZE_COMPLETE=%d) is_fs_frozen=%u total_discard_ranges=%d",
+			    frozen, SB_FREEZE_COMPLETE, zmp->is_fs_frozen, total_discard_ranges);
+		error = -XFS_ERROR(EBUSY);
+	} else {
+		zxfs_set_discard_gran(mp);
+		arg.discard_gran_sectors = zmp->discard_gran_bbs;
+	}
+
+	if (error == 0) {
+		if (copy_to_user(uarg, &arg, sizeof(arg)))
+			error = -XFS_ERROR(EFAULT);
+	}
+
+	return error;
+}
+
 long xfs_zioctl(struct file	*filp, unsigned int	cmd, void __user *arg)
 {
 	switch (cmd) {
 		case XFS_ZIOC_MONITOR_FS:
 			return xfs_ioctl_monitor_fs(filp, arg);
+		case XFS_ZIOC_REFRESH_DISCARD_GRAN:
+			return xfs_ioctl_refresh_discard_gran(filp, arg);
 	}
 
 	return -ENOTTY;

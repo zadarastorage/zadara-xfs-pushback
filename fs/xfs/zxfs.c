@@ -47,6 +47,50 @@ void zxfs_error(xfs_mount_t *mp, int flags)
 }
 
 /*
+ * Fetches the discard granularity from the underlying
+ * block device. FS needs to be "idle" at this point.
+ */
+void zxfs_set_discard_gran(xfs_mount_t *mp)
+{
+	struct zxfs_mount *zmp = &mp->m_zxfs;
+	struct request_queue *q = bdev_get_queue(mp->m_ddev_targp->bt_bdev);
+	xfs_extlen_t curr = zmp->discard_gran_bbs;
+	char bdn[BDEVNAME_SIZE] = {'\0'};
+
+	bdevname(mp->m_ddev_targp->bt_bdev, bdn);
+
+	if (q == NULL) {
+		ZXFSLOG(mp, Z_KWARN, "bdev[%s] queue is NULL", bdn);
+		goto out;
+	}
+	if (!blk_queue_discard(q)) {
+		ZXFSLOG(mp, Z_KWARN, "bdev[%s] QUEUE_FLAG_DISCARD is off", bdn);
+		goto out;
+	}
+	ZXFSLOG(mp, Z_KINFO, "bdev[%s] queue: discard_granularity=%u (sb_blocksize=%u)", bdn,
+		q->limits.discard_granularity, mp->m_sb.sb_blocksize);
+	ZXFSLOG(mp, Z_KINFO, "bdev[%s] queue: max_discard_sectors=%u discard_alignment=%u discard_misaligned=%u",
+		bdn, q->limits.max_discard_sectors, q->limits.discard_alignment,
+		q->limits.discard_misaligned);
+	if (q->limits.discard_granularity == 0 ||
+		(q->limits.discard_granularity & (q->limits.discard_granularity - 1)) != 0 || /* must be power of 2 */
+		q->limits.discard_granularity < mp->m_sb.sb_blocksize || /* must be larger than FSB */
+		q->limits.discard_granularity % mp->m_sb.sb_blocksize != 0 || /* granularity must divide nicely by block-size */
+		q->limits.max_discard_sectors < q->limits.discard_granularity ||
+		q->limits.discard_alignment != 0 ||
+		q->limits.discard_misaligned) {
+		ZXFSLOG(mp, Z_KWARN, "bdev[%s] cannot enable discard support", bdn);
+		goto out;
+	}
+		
+	zmp->discard_gran_bbs = BTOBB(q->limits.discard_granularity);
+	ZXFSLOG(mp, Z_KINFO, "bdev[%s] enable discard support discard_gran_bbs:%u=>%u", bdn, curr, zmp->discard_gran_bbs);
+
+out:
+	return;
+}
+
+/*
  * Called very early during the mount sequence, at the point when:
  * - mount options have been parsed
  * - mp->m_fsname is known 
@@ -65,6 +109,7 @@ void zxfs_mp_init(xfs_mount_t *mp)
 	ZXFSLOG(mp, Z_KINFO, "INIT");
 
 	atomic64_set(&zmp->shutdown_flags, 0);
+	atomic_set(&zmp->total_discard_ranges, 0);
 
 	zmp->kobj_in_use = 0;
 
@@ -75,39 +120,7 @@ void zxfs_mp_init(xfs_mount_t *mp)
 	 * structures must be ready.
 	 */
 	zmp->online_discard = 1; /* default */
-	while (true) {
-		char bdn[BDEVNAME_SIZE] = {'\0'};
-		struct request_queue *q = bdev_get_queue(mp->m_ddev_targp->bt_bdev);
-
-		bdevname(mp->m_ddev_targp->bt_bdev, bdn);
-
-		if (q == NULL) {
-			ZXFSLOG(mp, Z_KWARN, "bdev[%s] queue is NULL", bdn);
-			break;
-		}
-		if (!blk_queue_discard(q)) {
-			ZXFSLOG(mp, Z_KWARN, "bdev[%s] QUEUE_FLAG_DISCARD is off", bdn);
-			break;
-		}
-		ZXFSLOG(mp, Z_KINFO, "bdev[%s] queue: discard_granularity=%u (sb_blocksize=%u)", bdn,
-			q->limits.discard_granularity, mp->m_sb.sb_blocksize);
-		ZXFSLOG(mp, Z_KINFO, "bdev[%s] queue: max_discard_sectors=%u discard_alignment=%u discard_misaligned=%u",
-			bdn, q->limits.max_discard_sectors, q->limits.discard_alignment,
-			q->limits.discard_misaligned);
-		if (q->limits.discard_granularity == 0 ||
-			(q->limits.discard_granularity & (q->limits.discard_granularity - 1)) != 0 || /* must be power of 2 */
-			q->limits.discard_granularity < mp->m_sb.sb_blocksize || /* must be larger than FSB */
-			q->limits.discard_granularity % mp->m_sb.sb_blocksize != 0 || /* granularity must divide nicely by block-size */
-			q->limits.max_discard_sectors < q->limits.discard_granularity ||
-			q->limits.discard_alignment != 0 ||
-			q->limits.discard_misaligned) {
-			ZXFSLOG(mp, Z_KWARN, "bdev[%s] cannot enable discard support", bdn);
-		} else {
-			zmp->discard_gran_bbs = BTOBB(q->limits.discard_granularity);
-			ZXFSLOG(mp, Z_KINFO, "bdev[%s] enable discard support discard_gran_bbs=%u", bdn, zmp->discard_gran_bbs);
-		}
-		break;
-	}
+	zxfs_set_discard_gran(mp);
 
 	zxfs_control_init(zmp);
 }

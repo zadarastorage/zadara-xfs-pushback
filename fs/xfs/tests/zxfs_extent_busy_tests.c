@@ -135,7 +135,9 @@ STATIC int alloc_mp(unsigned int discard_gran_bytes, xfs_mount_t **out_mp)
 	mp->m_bsize = XFS_FSB_TO_BB(mp, 1);
 
 	zmp = &mp->m_zxfs;
+	atomic64_set(&zmp->shutdown_flags, 0);
 	zmp->discard_gran_bbs = BTOBBT(discard_gran_bytes);
+	atomic_set(&zmp->total_discard_ranges, 0);
 	zmp->online_discard = 1;
 
 	*out_mp = mp;
