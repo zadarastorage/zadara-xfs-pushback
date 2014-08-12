@@ -1,5 +1,5 @@
 /*
- * This file is meant to be included directly from fs/xfs/xfs_extent_busy.c,
+ * This file is meant to be included directly from fs/xfs/xfs_trans.c,
  * so no #ifndef/#define/#endif protection or function declarations are needed.
  */
 

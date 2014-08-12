@@ -207,6 +207,10 @@ xfs_growfs_data_private(
 		return error;
 	}
 
+#ifdef CONFIG_XFS_ZADARA
+	ZXFSLOG_TAG(mp, Z_KINFO, ZKLOG_TAG_RESIZE, "Resize: #AG %u => %u", oagcount, nagcount);
+#endif /*CONFIG_XFS_ZADARA*/
+
 	/*
 	 * Write new AG headers to disk. Non-transactional, but written
 	 * synchronously so they are completed prior to the growfs transaction
@@ -214,6 +218,14 @@ xfs_growfs_data_private(
 	 */
 	nfree = 0;
 	for (agno = nagcount - 1; agno >= oagcount; agno--, new -= agsize) {
+#ifdef CONFIG_XFS_ZADARA
+		ZXFSLOG_TAG(mp, Z_KDEB1, ZKLOG_TAG_RESIZE, "Resize: adding header AG=%u (oagcount=%u)", agno, oagcount);
+		if (atomic_read(&mp->m_zxfs.allow_resize) == 0) {
+			ZXFSLOG_TAG(mp, Z_KWARN, ZKLOG_TAG_RESIZE, "Resize: cancelled on adding header AG=%u (oagcount=%u)", agno, oagcount);
+			error = ECANCELED;
+			goto error0;
+		}
+#endif /*CONFIG_XFS_ZADARA*/
 		/*
 		 * AG freespace header block
 		 */
@@ -447,7 +459,13 @@ xfs_growfs_data_private(
 	xfs_set_low_space_thresholds(mp);
 
 	/* update secondary superblocks. */
+#ifdef CONFIG_XFS_ZADARA
+	ZXFSLOG_TAG(mp, Z_KINFO, ZKLOG_TAG_RESIZE, "Resize: start updating secondary superblocks");
+#endif /*CONFIG_XFS_ZADARA*/
 	for (agno = 1; agno < nagcount; agno++) {
+#ifdef CONFIG_XFS_ZADARA
+		ZXFSLOG_TAG(mp, Z_KDEB1, ZKLOG_TAG_RESIZE, "Resize: updating secondary superblock AG=%u/%u", agno, nagcount);
+#endif /*CONFIG_XFS_ZADARA*/
 		error = 0;
 		/*
 		 * new secondary superblocks need to be zeroed, not read from
@@ -492,6 +510,10 @@ xfs_growfs_data_private(
 			break; /* no point in continuing */
 		}
 	}
+
+#ifdef CONFIG_XFS_ZADARA
+	ZXFSLOG_TAG(mp, error == 0 ? Z_KINFO : Z_KERR, ZKLOG_TAG_RESIZE, "Resize: completed err=%d", -error);
+#endif /*CONFIG_XFS_ZADARA*/
 	return error;
 
  error0:
@@ -540,6 +562,61 @@ xfs_growfs_data(
 	if (!mutex_trylock(&mp->m_growlock))
 		return XFS_ERROR(EWOULDBLOCK);
 	error = xfs_growfs_data_private(mp, in);
+#ifdef CONFIG_XFS_ZADARA
+	/* 
+	 * If we had an error, we might have allocated
+	 * PAGs, which are >=sb_agcount. We need to free
+	 * those, because they will not get freed in
+	 * xfs_free_perag().
+	 */
+	if (error) {
+		unsigned int n_pags = 0;
+		xfs_perag_t* pags[16] = {0};
+		xfs_agnumber_t start_agno = mp->m_sb.sb_agcount;
+		bool deleted_at_least_one = false;
+
+		do {
+			unsigned int pag_idx = 0;
+
+			spin_lock(&mp->m_perag_lock);
+			n_pags = radix_tree_gang_lookup(&mp->m_perag_tree, (void**)pags, start_agno, ARRAY_SIZE(pags));
+			for (pag_idx = 0; pag_idx < n_pags; ++pag_idx) {
+				xfs_perag_t *deleted = NULL;
+
+				/* for next lookup */
+				start_agno = pags[pag_idx]->pag_agno + 1;
+
+				/* some bug in radix_tree_gang_lookup()??? */
+				if (ZXFS_WARN_ON(pags[pag_idx]->pag_agno < mp->m_sb.sb_agcount)) {
+					pags[pag_idx] = NULL;
+					continue;
+				}
+				/* nobody should really be touching these AGs...*/
+				if (ZXFS_WARN(atomic_read(&pags[pag_idx]->pag_ref) > 0,
+					          "XFS(%s): unused AG[%u] somehow got used!",
+					          mp->m_fsname, pags[pag_idx]->pag_agno)) {
+					pags[pag_idx] = NULL;
+					continue;
+				}
+
+				if (!deleted_at_least_one) {
+					deleted_at_least_one = true;
+					ZXFSLOG_TAG(mp, Z_KWARN, ZKLOG_TAG_RESIZE, "Resize failed, deleting unused AGs");
+				}
+				ZXFSLOG_TAG(mp, Z_KDEB1, ZKLOG_TAG_RESIZE, "Deleting unused AG[%u]", pags[pag_idx]->pag_agno);
+				deleted = radix_tree_delete(&mp->m_perag_tree, pags[pag_idx]->pag_agno);
+				ASSERT_ALWAYS(deleted == pags[pag_idx]);
+			}
+			spin_unlock(&mp->m_perag_lock);
+
+			/* now delete all those still marked for deletion */
+			for (pag_idx = 0; pag_idx < n_pags; ++pag_idx) {
+				if (pags[pag_idx])
+					call_rcu(&pags[pag_idx]->rcu_head, xfs_free_perag_rcu_cb);
+			}
+		} while (n_pags > 0);
+	}
+#endif /*CONFIG_XFS_ZADARA*/
 	mutex_unlock(&mp->m_growlock);
 	return error;
 }

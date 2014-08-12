@@ -14,3 +14,9 @@ void xfs_uuid_table_free(void)
 	mutex_unlock(&xfs_uuid_table_mutex);
 }
 
+/* Same as __xfs_free_perag, but visible to other files */
+void xfs_free_perag_rcu_cb(struct rcu_head	*head)
+{
+	__xfs_free_perag(head);
+}
+

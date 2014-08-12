@@ -25,4 +25,6 @@ enum {
 
 #define XFS_ZIOC_MONITOR_FS			    _IOWR('X', XFS_ZIOC_FIRST_NR +  0, struct xfs_ioctl_monitor_fs_args)
 #define XFS_ZIOC_REFRESH_DISCARD_GRAN    _IOR('X', XFS_ZIOC_FIRST_NR +  1, struct xfs_ioctl_refresh_discard_gran_args)
+#define XFS_ZIOC_ALLOW_RESIZE            _IOW('X', XFS_ZIOC_FIRST_NR +  2, __u8)
+
 

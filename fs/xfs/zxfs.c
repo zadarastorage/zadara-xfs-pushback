@@ -11,6 +11,7 @@ struct zklog_module_ctx *ZKLOG_THIS_MODULE_CTX = NULL;
 zklog_tag_t ZKLOG_TAG_AGF = 0;
 zklog_tag_t ZKLOG_TAG_BUSY_EXT = 0;
 zklog_tag_t ZKLOG_TAG_DISCARD = 0;
+zklog_tag_t ZKLOG_TAG_RESIZE = 0;
 
 /****** MISC stuff ****************************************/
 
@@ -112,6 +113,8 @@ void zxfs_mp_init(xfs_mount_t *mp)
 	atomic_set(&zmp->total_discard_ranges, 0);
 
 	zmp->kobj_in_use = 0;
+
+	atomic_set(&zmp->allow_resize, 1);
 
 	/* 
 	 * set up the discard support.
@@ -251,7 +254,12 @@ STATIC int zinit_xfs_klog(void)
 	}
 	error = zklog_add_tag("dc", "Discard", Z_KINFO, &ZKLOG_TAG_DISCARD);
 	if (error != 0) {
-		zklog(Z_KERR, "zklog_add_tag('tc') failed, error=%d", error);
+		zklog(Z_KERR, "zklog_add_tag('dc') failed, error=%d", error);
+		goto out;
+	}
+	error = zklog_add_tag("sz", "Resize", Z_KINFO, &ZKLOG_TAG_RESIZE);
+	if (error != 0) {
+		zklog(Z_KERR, "zklog_add_tag('sz') failed, ret=%d", error);
 		goto out;
 	}
 

@@ -9,6 +9,7 @@
 extern zklog_tag_t ZKLOG_TAG_AGF;
 extern zklog_tag_t ZKLOG_TAG_BUSY_EXT;
 extern zklog_tag_t ZKLOG_TAG_DISCARD;
+extern zklog_tag_t ZKLOG_TAG_RESIZE;
 
 #define ZXFSLOG(mp, level, fmt, ...)				zklog(level, "XFS(%s): "fmt, mp->m_fsname, ##__VA_ARGS__)
 #define ZXFSLOG_TAG(mp, level, tag, fmt, ...)		zklog_tag(level, tag, "XFS(%s): "fmt, mp->m_fsname, ##__VA_ARGS__)
@@ -69,6 +70,12 @@ struct zxfs_mount {
 	 * with the unmount.
 	 */
 	unsigned int kobj_in_use:1;
+
+	/*
+	 * VAC is able to set/unset this flag through a IOCTL,
+	 * in order to cancel an ongoing resize.
+	 */
+	atomic_t allow_resize;
 };
 
 struct zxfs_globals_t {
@@ -152,6 +159,7 @@ typedef struct xfs_mount xfs_mount_t;
 /****** MISC stuff ****************************************/
 
 void xfs_uuid_table_free(void);
+void xfs_free_perag_rcu_cb(struct rcu_head	*head);
 
 long xfs_zioctl(struct file	*filp, unsigned int	cmd, void __user *arg);
 

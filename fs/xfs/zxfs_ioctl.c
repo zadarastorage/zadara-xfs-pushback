@@ -73,6 +73,28 @@ STATIC long xfs_ioctl_refresh_discard_gran(struct file *filp, void __user *uarg)
 	return error;
 }
 
+STATIC long xfs_ioctl_allow_resize(struct file *filp, void __user *uarg)
+{
+	int error = 0;
+	struct inode *inode = filp->f_path.dentry->d_inode;
+	struct xfs_mount *mp = XFS_I(inode)->i_mount;
+	struct zxfs_mount *zmp = &mp->m_zxfs;
+	u8 new_allowed = 0;
+	int prev_allowed = 0;
+
+	if (copy_from_user(&new_allowed, uarg, sizeof(new_allowed))) {
+		error = -XFS_ERROR(EFAULT);
+		goto out;
+	}
+
+	new_allowed = (new_allowed != 0) ? 1 : 0;
+	prev_allowed = atomic_xchg(&zmp->allow_resize, (int)new_allowed);
+	ZXFSLOG(mp, Z_KINFO, "resize allowed: %d => %u", prev_allowed, new_allowed);
+
+out:
+	return error;
+}
+
 long xfs_zioctl(struct file	*filp, unsigned int	cmd, void __user *arg)
 {
 	switch (cmd) {
@@ -80,6 +102,8 @@ long xfs_zioctl(struct file	*filp, unsigned int	cmd, void __user *arg)
 			return xfs_ioctl_monitor_fs(filp, arg);
 		case XFS_ZIOC_REFRESH_DISCARD_GRAN:
 			return xfs_ioctl_refresh_discard_gran(filp, arg);
+		case XFS_ZIOC_ALLOW_RESIZE:
+			return xfs_ioctl_allow_resize(filp, arg);
 	}
 
 	return -ENOTTY;

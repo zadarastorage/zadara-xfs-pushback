@@ -68,6 +68,7 @@ STATIC ssize_t fs_state_show(xfs_mount_t *mp, struct zxfs_mount *zmp, char *buf)
 	size += scnprintf(buf + size, PAGE_SIZE - size, "Discard-gran BBs:\t%u\n", zmp->discard_gran_bbs);
 	size += scnprintf(buf + size, PAGE_SIZE - size, "Total discard-ranges:\t%d\n", atomic_read(&zmp->total_discard_ranges));
 	size += scnprintf(buf + size, PAGE_SIZE - size, "Online discard enabled:\t%u\n", zmp->online_discard);
+	size += scnprintf(buf + size, PAGE_SIZE - size, "Resize allowed:\t\t%u\n", atomic_read(&zmp->allow_resize));
 	size += scnprintf(buf + size, PAGE_SIZE - size, "FS is frozen:\t\t%u\n", zmp->is_fs_frozen);
 
 	size += scnprintf(buf + size, PAGE_SIZE - size, "Shutdown flags:\t\t0x%llu\n", shutdown_flags);
@@ -199,6 +200,36 @@ STATIC ssize_t online_discard_store(xfs_mount_t *mp, struct zxfs_mount *zmp, con
 	return error;
 }
 
+STATIC ssize_t allow_resize_show(xfs_mount_t *mp, struct zxfs_mount *zmp, char *buf)
+{
+	ssize_t size = 0;
+	int allowed = atomic_read(&zmp->allow_resize);
+
+	size += scnprintf(buf + size, PAGE_SIZE - size, "%d (%s)\n", allowed, allowed ? "allowed" : "not allowed");
+
+	return size;
+}
+
+STATIC ssize_t allow_resize_store(xfs_mount_t *mp, struct zxfs_mount *zmp, const char *buf, size_t buf_size)
+{
+	ssize_t error = 0;
+	unsigned int new_allowed = 0;
+	
+	error = kstrtouint(buf, 0/*base*/, &new_allowed);
+	if (error) {
+		ZXFSLOG(mp, Z_KERR, "Failed parsing: [%s]", buf);
+	} else {
+		int prev_allowed = 0;
+
+		new_allowed = new_allowed ? 1 : 0;
+		prev_allowed = atomic_xchg(&zmp->allow_resize, new_allowed);
+		ZXFSLOG(mp, Z_KINFO, "Allow resize: %d => %d", prev_allowed, new_allowed);
+		error = buf_size;
+	}
+
+	return error;
+}
+
 struct zxfs_attr {
 	struct attribute attr;
 	ssize_t (*show)(xfs_mount_t *mp, struct zxfs_mount *zmp, char *buf);
@@ -219,12 +250,14 @@ struct zxfs_attr {
 
 ZXFS_RO_ATTR(fs_state);
 ZXFS_RW_ATTR(online_discard);
+ZXFS_RW_ATTR(allow_resize);
 ZXFS_RW_ATTR_NOZSNAP(ext_busy_tree);
 ZXFS_RW_ATTR_NOZSNAP(discard_range_tree);
 
 static struct attribute* zxfs_sysfs_attrs[] = {
 	ZXFS_ATTR_IN_LIST(fs_state),
 	ZXFS_ATTR_IN_LIST(online_discard),
+	ZXFS_ATTR_IN_LIST(allow_resize),
 	ZXFS_ATTR_IN_LIST(ext_busy_tree),
 	ZXFS_ATTR_IN_LIST(discard_range_tree),
 	NULL
