@@ -12,6 +12,7 @@ zklog_tag_t ZKLOG_TAG_AGF = 0;
 zklog_tag_t ZKLOG_TAG_BUSY_EXT = 0;
 zklog_tag_t ZKLOG_TAG_DISCARD = 0;
 zklog_tag_t ZKLOG_TAG_RESIZE = 0;
+zklog_tag_t ZKLOG_TAG_XATTR = 0;
 
 /****** MISC stuff ****************************************/
 
@@ -260,6 +261,11 @@ STATIC int zinit_xfs_klog(void)
 	error = zklog_add_tag("sz", "Resize", Z_KINFO, &ZKLOG_TAG_RESIZE);
 	if (error != 0) {
 		zklog(Z_KERR, "zklog_add_tag('sz') failed, ret=%d", error);
+		goto out;
+	}
+	error = zklog_add_tag("xa", "XATTR", Z_KINFO, &ZKLOG_TAG_XATTR);
+	if (error != 0) {
+		zklog(Z_KERR, "zklog_add_tag('xa') failed, ret=%d", error);
 		goto out;
 	}
 

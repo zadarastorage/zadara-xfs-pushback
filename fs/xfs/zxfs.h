@@ -10,6 +10,7 @@ extern zklog_tag_t ZKLOG_TAG_AGF;
 extern zklog_tag_t ZKLOG_TAG_BUSY_EXT;
 extern zklog_tag_t ZKLOG_TAG_DISCARD;
 extern zklog_tag_t ZKLOG_TAG_RESIZE;
+extern zklog_tag_t ZKLOG_TAG_XATTR;
 
 #define ZXFSLOG(mp, level, fmt, ...)				zklog(level, "XFS(%s): "fmt, mp->m_fsname, ##__VA_ARGS__)
 #define ZXFSLOG_TAG(mp, level, tag, fmt, ...)		zklog_tag(level, tag, "XFS(%s): "fmt, mp->m_fsname, ##__VA_ARGS__)

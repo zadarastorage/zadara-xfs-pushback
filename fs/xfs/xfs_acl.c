@@ -16,6 +16,10 @@
  * Inc.,  51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
  */
 #include "xfs.h"
+#ifdef CONFIG_XFS_ZADARA
+#include "xfs_sb.h"
+#include "xfs_mount.h"
+#endif /*CONFIG_XFS_ZADARA*/
 #include "xfs_acl.h"
 #include "xfs_attr.h"
 #include "xfs_bmap_btree.h"
@@ -134,9 +138,17 @@ xfs_get_acl(struct inode *inode, int type)
 	 * go out to the disk.
 	 */
 
+#ifdef CONFIG_XFS_ZADARA
+	xfs_acl = vzalloc(sizeof(struct xfs_acl));
+	if (!xfs_acl) {
+		ZXFSLOG_TAG(ip->i_mount, Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu vzalloc(sizeof(struct xfs_acl)(%lu)) failed", ip->i_ino, sizeof(struct xfs_acl));
+		return ERR_PTR(-ENOMEM);
+	}
+#else /*CONFIG_XFS_ZADARA*/	
 	xfs_acl = kzalloc(sizeof(struct xfs_acl), GFP_KERNEL);
 	if (!xfs_acl)
 		return ERR_PTR(-ENOMEM);
+#endif /*CONFIG_XFS_ZADARA*/
 
 	error = -xfs_attr_get(ip, ea_name, (unsigned char *)xfs_acl,
 							&len, ATTR_ROOT);
@@ -160,7 +172,11 @@ xfs_get_acl(struct inode *inode, int type)
  out_update_cache:
 	set_cached_acl(inode, type, acl);
  out:
+#ifdef CONFIG_XFS_ZADARA
+	vfree(xfs_acl);
+#else /*CONFIG_XFS_ZADARA*/
 	kfree(xfs_acl);
+#endif /*CONFIG_XFS_ZADARA*/
 	return acl;
 }
 
@@ -171,19 +187,37 @@ xfs_set_acl(struct inode *inode, int type, struct posix_acl *acl)
 	unsigned char *ea_name;
 	int error;
 
+#ifdef CONFIG_XFS_ZADARA
+	ZXFSLOG_TAG(ip->i_mount, Z_KDEB1, ZKLOG_TAG_XATTR, "ino=%llu type=0x%x acl=%p", ip->i_ino, type, acl);
+	if (S_ISLNK(inode->i_mode)) {
+		ZXFSLOG_TAG(ip->i_mount, Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu S_ISLNK => EOPNOTSUPP", ip->i_ino);
+		return -EOPNOTSUPP;
+	}
+#else /*CONFIG_XFS_ZADARA*/	
 	if (S_ISLNK(inode->i_mode))
 		return -EOPNOTSUPP;
+#endif /*CONFIG_XFS_ZADARA*/
 
 	switch (type) {
 	case ACL_TYPE_ACCESS:
 		ea_name = SGI_ACL_FILE;
 		break;
 	case ACL_TYPE_DEFAULT:
+#ifdef CONFIG_XFS_ZADARA
+		if (!S_ISDIR(inode->i_mode)) {
+			ZXFSLOG_TAG(ip->i_mount, Z_KWARN, ZKLOG_TAG_XATTR,"ino=%llu ACL_TYPE_DEFAULT !S_ISDIR ret=%d", ip->i_ino, acl ? -EACCES : 0);
+			return acl ? -EACCES : 0;
+		}
+#else /*CONFIG_XFS_ZADARA*/
 		if (!S_ISDIR(inode->i_mode))
 			return acl ? -EACCES : 0;
+#endif /*CONFIG_XFS_ZADARA*/
 		ea_name = SGI_ACL_DEFAULT;
 		break;
 	default:
+#ifdef CONFIG_XFS_ZADARA		
+		ZXFSLOG_TAG(ip->i_mount, Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu unknown type=0x%x => EINVAL", ip->i_ino, type);
+#endif /*CONFIG_XFS_ZADARA*/
 		return -EINVAL;
 	}
 
@@ -191,9 +225,17 @@ xfs_set_acl(struct inode *inode, int type, struct posix_acl *acl)
 		struct xfs_acl *xfs_acl;
 		int len;
 
+#ifdef CONFIG_XFS_ZADARA
+		xfs_acl = vzalloc(sizeof(struct xfs_acl));
+		if (!xfs_acl) {
+			ZXFSLOG_TAG(ip->i_mount, Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu vzalloc(struct xfs_acl(%lu)) ENOMEM", ip->i_ino, sizeof(struct xfs_acl));
+			return -ENOMEM;
+		}
+#else /*CONFIG_XFS_ZADARA*/
 		xfs_acl = kzalloc(sizeof(struct xfs_acl), GFP_KERNEL);
 		if (!xfs_acl)
 			return -ENOMEM;
+#endif /*CONFIG_XFS_ZADARA*/
 
 		xfs_acl_to_disk(xfs_acl, acl);
 		len = sizeof(struct xfs_acl) -
@@ -203,12 +245,20 @@ xfs_set_acl(struct inode *inode, int type, struct posix_acl *acl)
 		error = -xfs_attr_set(ip, ea_name, (unsigned char *)xfs_acl,
 				len, ATTR_ROOT);
 
+#ifdef CONFIG_XFS_ZADARA		
+		ZXFSLOG_TAG(ip->i_mount, error == 0 ? Z_KDEB1 : Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu xfs_attr_set(ea_name=%s, len=%d) ret=%d", ip->i_ino, ea_name, len, error);
+		vfree(xfs_acl);
+#else /*CONFIG_XFS_ZADARA*/
 		kfree(xfs_acl);
+#endif /*CONFIG_XFS_ZADARA*/
 	} else {
 		/*
 		 * A NULL ACL argument means we want to remove the ACL.
 		 */
 		error = -xfs_attr_remove(ip, ea_name, ATTR_ROOT);
+#ifdef CONFIG_XFS_ZADARA
+		ZXFSLOG_TAG(ip->i_mount, error == 0 ? Z_KDEB1 : Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu xfs_attr_remove(ea_name=%s) ret=%d", ip->i_ino, ea_name, error);
+#endif /*CONFIG_XFS_ZADARA*/
 
 		/*
 		 * If the attribute didn't exist to start with that's fine.
@@ -235,6 +285,9 @@ xfs_set_mode(struct inode *inode, umode_t mode)
 		iattr.ia_ctime = current_fs_time(inode->i_sb);
 
 		error = -xfs_setattr_nonsize(XFS_I(inode), &iattr, XFS_ATTR_NOACL);
+#ifdef CONFIG_XFS_ZADARA
+		ZXFSLOG_TAG(XFS_I(inode)->i_mount, error == 0 ? Z_KDEB1 : Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu xfs_setattr_nonsize(mode=0%o) ret=%d", XFS_I(inode)->i_ino, mode, error);
+#endif /*CONFIG_XFS_ZADARA*/
 	}
 
 	return error;
@@ -271,14 +324,24 @@ xfs_inherit_acl(struct inode *inode, struct posix_acl *acl)
 {
 	umode_t mode = inode->i_mode;
 	int error = 0, inherit = 0;
+#ifdef CONFIG_XFS_ZADARA
+	struct xfs_inode *ip = XFS_I(inode);
+	ZXFSLOG_TAG(ip->i_mount, Z_KDEB1, ZKLOG_TAG_XATTR, "ino=%llu mode=0%o", ip->i_ino, inode->i_mode);
+#endif /*CONFIG_XFS_ZADARA*/	
 
 	if (S_ISDIR(inode->i_mode)) {
 		error = xfs_set_acl(inode, ACL_TYPE_DEFAULT, acl);
+#ifdef CONFIG_XFS_ZADARA		
+		ZXFSLOG_TAG(ip->i_mount, error == 0 ? Z_KDEB1 : Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu xfs_set_acl(ACL_TYPE_DEFAULT) ret=%d", ip->i_ino, error);
+#endif /*CONFIG_XFS_ZADARA*/
 		if (error)
 			goto out;
 	}
 
 	error = posix_acl_create(&acl, GFP_KERNEL, &mode);
+#ifdef CONFIG_XFS_ZADARA
+	ZXFSLOG_TAG(ip->i_mount, error >= 0 ? Z_KDEB1 : Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu posix_acl_create() mode=0%o ret=%d", ip->i_ino, mode, error);
+#endif /*CONFIG_XFS_ZADARA*/
 	if (error < 0)
 		return error;
 
@@ -291,11 +354,18 @@ xfs_inherit_acl(struct inode *inode, struct posix_acl *acl)
 		inherit = 1;
 
 	error = xfs_set_mode(inode, mode);
+#ifdef CONFIG_XFS_ZADARA
+	ZXFSLOG_TAG(ip->i_mount, error == 0 ? Z_KDEB1 : Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu xfs_set_mode(mode=0%o) ret=%d", ip->i_ino, mode, error);
+#endif /*CONFIG_XFS_ZADARA*/
 	if (error)
 		goto out;
 
 	if (inherit)
 		error = xfs_set_acl(inode, ACL_TYPE_ACCESS, acl);
+#ifdef CONFIG_XFS_ZADARA
+	if (inherit)
+		ZXFSLOG_TAG(ip->i_mount, error == 0 ? Z_KDEB1 : Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu xfs_set_acl(ACL_TYPE_ACCESS) ret=%d", ip->i_ino, error);
+#endif /*CONFIG_XFS_ZADARA*/
 
 out:
 	posix_acl_release(acl);
@@ -308,18 +378,35 @@ xfs_acl_chmod(struct inode *inode)
 	struct posix_acl *acl;
 	int error;
 
+#ifdef CONFIG_XFS_ZADARA
+	struct xfs_inode *ip = XFS_I(inode);
+	if (S_ISLNK(inode->i_mode)) {
+		ZXFSLOG_TAG(ip->i_mount, Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu S_ISLNK(inode->i_mode=0%o) EOPNOTSUPP", ip->i_ino, inode->i_mode);
+		return -EOPNOTSUPP;
+	}
+#else /*CONFIG_XFS_ZADARA*/
 	if (S_ISLNK(inode->i_mode))
 		return -EOPNOTSUPP;
+#endif /*CONFIG_XFS_ZADARA*/
 
 	acl = xfs_get_acl(inode, ACL_TYPE_ACCESS);
+#ifdef CONFIG_XFS_ZADARA
+	ZXFSLOG_TAG(ip->i_mount, IS_ERR(acl) || !acl ? Z_KWARN : Z_KDEB1, ZKLOG_TAG_XATTR, "ino=%llu xfs_get_acl=%p/%d", ip->i_ino, acl, (int)(IS_ERR(acl) ? PTR_ERR(acl) : 0));
+#endif /*CONFIG_XFS_ZADARA*/
 	if (IS_ERR(acl) || !acl)
 		return PTR_ERR(acl);
 
 	error = posix_acl_chmod(&acl, GFP_KERNEL, inode->i_mode);
+#ifdef CONFIG_XFS_ZADARA
+	ZXFSLOG_TAG(ip->i_mount, error == 0 ? Z_KDEB1 : Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu posix_acl_chmod(inode->i_mode=0%o) ret=%d", ip->i_ino, inode->i_mode, error);
+#endif /*CONFIG_XFS_ZADARA*/
 	if (error)
 		return error;
 
 	error = xfs_set_acl(inode, ACL_TYPE_ACCESS, acl);
+#ifdef CONFIG_XFS_ZADARA
+	ZXFSLOG_TAG(ip->i_mount, error == 0 ? Z_KDEB1 : Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu xfs_set_acl(ACL_TYPE_ACCESS) ret=%d", ip->i_ino, error);
+#endif /*CONFIG_XFS_ZADARA*/
 	posix_acl_release(acl);
 	return error;
 }
@@ -351,12 +438,29 @@ xfs_xattr_acl_set(struct dentry *dentry, const char *name,
 	struct posix_acl *acl = NULL;
 	int error = 0;
 
+#ifdef CONFIG_XFS_ZADARA	
+	struct xfs_inode *ip = XFS_I(inode);
+	ZXFSLOG_TAG(ip->i_mount, Z_KDEB1, ZKLOG_TAG_XATTR, "ino=%llu name=[%s] flags=0x%x type=0x%x val=[%.*s]", ip->i_ino, name, flags, type, min_t(int, size, 16), (const char*)(value ? value : "NULL"));
+	if (flags & XATTR_CREATE) {
+		ZXFSLOG_TAG(ip->i_mount, Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu name=[%s] flags & XATTR_CREATE => -EINVAL", ip->i_ino, name);
+		return -EINVAL;
+	}
+	if (type == ACL_TYPE_DEFAULT && !S_ISDIR(inode->i_mode)) {
+		ZXFSLOG_TAG(ip->i_mount, Z_KWARN, ZKLOG_TAG_XATTR, "ino=%llu ACL_TYPE_DEFAULT !S_ISDIR ret=%d", ip->i_ino, value ? -EACCES : 0);
+		return value ? -EACCES : 0;
+	}
+	if ((current_fsuid() != inode->i_uid) && !capable(CAP_FOWNER)) {
+		ZXFSLOG_TAG(ip->i_mount, Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu current_fsuid(%u)!=inode->i_uid(%u) && !capable(CAP_FOWNER) => -EPERM", ip->i_ino, current_fsuid(), inode->i_uid);
+		return -EPERM;
+	}
+#else /*CONFIG_XFS_ZADARA*/
 	if (flags & XATTR_CREATE)
 		return -EINVAL;
 	if (type == ACL_TYPE_DEFAULT && !S_ISDIR(inode->i_mode))
 		return value ? -EACCES : 0;
 	if ((current_fsuid() != inode->i_uid) && !capable(CAP_FOWNER))
 		return -EPERM;
+#endif /*CONFIG_XFS_ZADARA*/
 
 	if (!value)
 		goto set_acl;
@@ -367,20 +471,40 @@ xfs_xattr_acl_set(struct dentry *dentry, const char *name,
 		 * acl_set_file(3) may request that we set default ACLs with
 		 * zero length -- defend (gracefully) against that here.
 		 */
+#ifdef CONFIG_XFS_ZADARA
+		ZXFSLOG_TAG(ip->i_mount, Z_KWARN, ZKLOG_TAG_XATTR, "ino=%llu posix_acl_from_xattr() ret=NULL", ip->i_ino);
+#endif /*CONFIG_XFS_ZADARA*/
 		goto out;
 	}
 	if (IS_ERR(acl)) {
 		error = PTR_ERR(acl);
+#ifdef CONFIG_XFS_ZADARA
+		ZXFSLOG_TAG(ip->i_mount, Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu posix_acl_from_xattr() ret=%d", ip->i_ino, error);
+#endif /*CONFIG_XFS_ZADARA*/
 		goto out;
 	}
 
 	error = posix_acl_valid(acl);
+#ifdef CONFIG_XFS_ZADARA
+	if (error) {
+		ZXFSLOG_TAG(ip->i_mount, Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu posix_acl_valid() ret=%d", ip->i_ino, error);
+		goto out_release;
+	}
+#else /*CONFIG_XFS_ZADARA*/
 	if (error)
 		goto out_release;
+#endif /*CONFIG_XFS_ZADARA*/
 
 	error = -EINVAL;
+#ifdef CONFIG_XFS_ZADARA
+	if (acl->a_count > XFS_ACL_MAX_ENTRIES) {
+		ZXFSLOG_TAG(ip->i_mount, Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu acl->a_count(%u) > XFS_ACL_MAX_ENTRIES(%u)", ip->i_ino, acl->a_count, XFS_ACL_MAX_ENTRIES);
+		goto out_release;
+	}
+#else /*CONFIG_XFS_ZADARA*/
 	if (acl->a_count > XFS_ACL_MAX_ENTRIES)
 		goto out_release;
+#endif /*CONFIG_XFS_ZADARA*/
 
 	if (type == ACL_TYPE_ACCESS) {
 		umode_t mode = inode->i_mode;
@@ -388,6 +512,9 @@ xfs_xattr_acl_set(struct dentry *dentry, const char *name,
 
 		if (error <= 0) {
 			posix_acl_release(acl);
+#ifdef CONFIG_XFS_ZADARA			
+			ZXFSLOG_TAG(ip->i_mount, error == 0 ? Z_KDEB1 : Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu posix_acl_equiv_mode() mode=0%o ret=%d", ip->i_ino, mode, error);
+#endif /*CONFIG_XFS_ZADARA*/
 			acl = NULL;
 
 			if (error < 0)
@@ -395,12 +522,18 @@ xfs_xattr_acl_set(struct dentry *dentry, const char *name,
 		}
 
 		error = xfs_set_mode(inode, mode);
+#ifdef CONFIG_XFS_ZADARA
+		ZXFSLOG_TAG(ip->i_mount, error == 0 ? Z_KDEB1 : Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu xfs_set_mode(mode=0%o) ret=%d", ip->i_ino, mode, error);
+#endif /*CONFIG_XFS_ZADARA*/
 		if (error)
 			goto out_release;
 	}
 
  set_acl:
 	error = xfs_set_acl(inode, type, acl);
+#ifdef CONFIG_XFS_ZADARA
+	ZXFSLOG_TAG(ip->i_mount, error == 0 ? Z_KDEB1 : Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu xfs_set_acl(type=0x%x) ret=%d", ip->i_ino, type, error);
+#endif /*CONFIG_XFS_ZADARA*/
  out_release:
 	posix_acl_release(acl);
  out:

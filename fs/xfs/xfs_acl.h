@@ -22,7 +22,11 @@ struct inode;
 struct posix_acl;
 struct xfs_inode;
 
+#ifdef CONFIG_XFS_ZADARA
+#define XFS_ACL_MAX_ENTRIES 2048
+#else /*CONFIG_XFS_ZADARA*/
 #define XFS_ACL_MAX_ENTRIES 25
+#endif /*CONFIG_XFS_ZADARA*/
 #define XFS_ACL_NOT_PRESENT (-1)
 
 /* On-disk XFS access control list structure */
