@@ -390,9 +390,6 @@ xfs_acl_chmod(struct inode *inode)
 #endif /*CONFIG_XFS_ZADARA*/
 
 	acl = xfs_get_acl(inode, ACL_TYPE_ACCESS);
-#ifdef CONFIG_XFS_ZADARA
-	ZXFSLOG_TAG(ip->i_mount, IS_ERR(acl) || !acl ? Z_KWARN : Z_KDEB1, ZKLOG_TAG_XATTR, "ino=%llu xfs_get_acl=%p/%d", ip->i_ino, acl, (int)(IS_ERR(acl) ? PTR_ERR(acl) : 0));
-#endif /*CONFIG_XFS_ZADARA*/
 	if (IS_ERR(acl) || !acl)
 		return PTR_ERR(acl);
 
