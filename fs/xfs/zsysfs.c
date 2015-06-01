@@ -80,6 +80,8 @@ STATIC ssize_t fs_state_show(xfs_mount_t *mp, struct zxfs_mount *zmp, char *buf)
 	PRINT_FLAG(SHUTDOWN_REMOTE_REQ);
 	PRINT_FLAG(SHUTDOWN_DEVICE_REQ);
 
+	size += scnprintf(buf + size, PAGE_SIZE - size, "Corruption seen:\t%s\n", atomic_read(&zmp->corruption_detected) != 0 ? "YES" : "NO");
+
 	return size;
 }
 

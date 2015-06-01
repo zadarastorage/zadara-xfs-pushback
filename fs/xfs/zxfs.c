@@ -48,6 +48,17 @@ void zxfs_error(xfs_mount_t *mp, int flags)
 	}
 }
 
+void zxfs_corruption_error(xfs_mount_t *mp)
+{
+	struct zxfs_mount *zmp = &mp->m_zxfs;
+
+	/* notify user-space if this is a first time we see it */
+	if (atomic_cmpxchg(&zmp->corruption_detected, 0, 1) == 0) {
+		ZXFS_WARN(1, "XFS(%s): CORRUPTION - notiyfing user-space", mp->m_fsname);
+		zxfs_control_poll_wake_up(zmp, POLLERR);
+	}
+}
+
 /*
  * Fetches the discard granularity from the underlying
  * block device. FS needs to be "idle" at this point.
@@ -111,6 +122,7 @@ void zxfs_mp_init(xfs_mount_t *mp)
 	ZXFSLOG(mp, Z_KINFO, "INIT");
 
 	atomic64_set(&zmp->shutdown_flags, 0);
+	atomic_set(&zmp->corruption_detected, 0);
 	atomic_set(&zmp->total_discard_ranges, 0);
 
 	zmp->kobj_in_use = 0;

@@ -10,6 +10,7 @@ struct xfs_ioctl_monitor_fs_args {
 	__u8 is_periodic;                            /* in: hint whether this is a periodic call, or just an occasional call to check something specific */
 
 #define XFS_ZIOC_FS_STATE_SHUTDOWN               (1ULL << 0)
+#define XFS_ZIOC_FS_CORRUPTED                    (1ULL << 1)
 	__u64 fs_state;                              /* out */
 };
 
@@ -26,5 +27,6 @@ enum {
 #define XFS_ZIOC_MONITOR_FS			    _IOWR('X', XFS_ZIOC_FIRST_NR +  0, struct xfs_ioctl_monitor_fs_args)
 #define XFS_ZIOC_REFRESH_DISCARD_GRAN    _IOR('X', XFS_ZIOC_FIRST_NR +  1, struct xfs_ioctl_refresh_discard_gran_args)
 #define XFS_ZIOC_ALLOW_RESIZE            _IOW('X', XFS_ZIOC_FIRST_NR +  2, __u8)
+#define XFS_ZIOC_FAKE_CORRUPTION          _IO('X', XFS_ZIOC_FIRST_NR +  3)
 
 

@@ -181,4 +181,7 @@ xfs_corruption_error(
 		xfs_hex_dump(p, 16);
 	xfs_error_report(tag, level, mp, filename, linenum, ra);
 	xfs_alert(mp, "Corruption detected. Unmount and run xfs_repair");
+#ifdef CONFIG_XFS_ZADARA
+	zxfs_corruption_error(mp);
+#endif /*CONFIG_XFS_ZADARA*/
 }
