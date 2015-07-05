@@ -3505,9 +3505,15 @@ xfs_iext_realloc_indirect(
 	if (new_size == 0) {
 		xfs_iext_destroy(ifp);
 	} else {
+#ifndef CONFIG_XFS_ZADARA
 		ifp->if_u1.if_ext_irec = (xfs_ext_irec_t *)
 			kmem_realloc(ifp->if_u1.if_ext_irec,
 				new_size, size, KM_NOFS);
+#else /*CONFIG_XFS_ZADARA*/
+		ifp->if_u1.if_ext_irec = (xfs_ext_irec_t *)
+			kmem_realloc_xfs_iext_realloc_indirect(ifp->if_u1.if_ext_irec,
+				new_size, size, KM_NOFS, ifp);
+#endif /*CONFIG_XFS_ZADARA*/
 	}
 }
 

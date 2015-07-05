@@ -60,6 +60,11 @@ extern void *kmem_zalloc(size_t, xfs_km_flags_t);
 extern void *kmem_realloc(const void *, size_t, size_t, xfs_km_flags_t);
 extern void  kmem_free(const void *);
 
+#ifdef CONFIG_XFS_ZADARA
+struct xfs_ifork;
+extern void *kmem_realloc_xfs_iext_realloc_indirect(const void *ptr, size_t newsize, size_t oldsize, xfs_km_flags_t flags, struct xfs_ifork *ifp);
+#endif /*CONFIG_XFS_ZADARA*/
+
 static inline void *kmem_zalloc_large(size_t size)
 {
 	return vzalloc(size);
