@@ -454,6 +454,16 @@ xfs_iomap_prealloc_size(
 	if (alloc_blocks < mp->m_writeio_blocks)
 		alloc_blocks = mp->m_writeio_blocks;
 
+#ifdef CONFIG_XFS_ZADARA
+	/*
+	 * Limit max pre-alloc size to 32MB to avoid overloading with io-zero writes for larger regions
+	 */
+#define MAX_SPECULATIVE_PREALLOC_FSBLOCKS	(XFS_B_TO_FSB(mp, (32*1024*1024)))
+
+	if (alloc_blocks > MAX_SPECULATIVE_PREALLOC_FSBLOCKS)
+		alloc_blocks = MAX_SPECULATIVE_PREALLOC_FSBLOCKS;
+#endif /* CONFIG_XFS_ZADARA */
+
 	return alloc_blocks;
 }
 
