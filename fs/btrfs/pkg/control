@@ -1,0 +1,10 @@
+Package: PKG_NAME
+Version: ZADARA_VERSION
+Architecture: PKG_ARCH
+Depends: linux-image-KRELEASE, zadara-kernel-KRELEASE-zutils(>=01)
+Section: admin
+Priority: optional
+Maintainer: Zadara Storage <support@zadarastorage.com>
+Homepage: http://www.zadarastorage.com
+Description: KMODULE kernel module
+ KMODULE kernel module as available in Linux kernel tree with Zadara changes

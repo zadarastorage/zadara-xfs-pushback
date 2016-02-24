@@ -1,0 +1,10 @@
+Package: zadara-kernel-3.18.19-zadara03-xfs
+Version: 08
+Architecture: amd64
+Depends: linux-image-3.18.19-zadara03
+Section: admin
+Priority: optional
+Maintainer: Zadara Storage <support@zadarastorage.com>
+Homepage: http://www.zadarastorage.com
+Description: xfs kernel module
+ xfs kernel module as available in Linux kernel tree with Zadara changes

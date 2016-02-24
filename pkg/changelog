@@ -1,0 +1,5 @@
+PKG_NAME (PKG_VERSION) stable; urgency=low
+
+   * KMODULE kernel module
+
+ -- Zadara Storage <support@zadarastorage.com>  DATE

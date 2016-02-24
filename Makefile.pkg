@@ -1,0 +1,78 @@
+INSTALL_FILE    = install -v -D  -o root -g root  -m 644
+INSTALL_SCRIPT  = install -v -D  -o root -g root  -m 755
+INSTALL_DIR     = install -v     -o root -g root  -m 755  -d 
+
+OUT_DIR        = $(PKG_ROOT_DIR)/..
+PKG_DEBIAN_DIR = $(PKG_ROOT_DIR)/DEBIAN
+PKG_USRSHR_DIR = $(PKG_ROOT_DIR)/usr/share
+
+TEMPLATE_POSTINST  = $(shell if [ -f $(KMODULE_SRC_DIR)/$(PKG_TEMPLATE)/postinst ];  then echo $(KMODULE_SRC_DIR)/$(PKG_TEMPLATE)/postinst;  else echo $(PKG_TEMPLATE)/postinst;  fi )
+TEMPLATE_POSTRM    = $(shell if [ -f $(KMODULE_SRC_DIR)/$(PKG_TEMPLATE)/postrm ];    then echo $(KMODULE_SRC_DIR)/$(PKG_TEMPLATE)/postrm;    else echo $(PKG_TEMPLATE)/postrm;    fi )
+TEMPLATE_CONTROL   = $(shell if [ -f $(KMODULE_SRC_DIR)/$(PKG_TEMPLATE)/control ];   then echo $(KMODULE_SRC_DIR)/$(PKG_TEMPLATE)/control;   else echo $(PKG_TEMPLATE)/control;   fi )
+TEMPLATE_COPYRIGHT = $(shell if [ -f $(KMODULE_SRC_DIR)/$(PKG_TEMPLATE)/copyright ]; then echo $(KMODULE_SRC_DIR)/$(PKG_TEMPLATE)/copyright; else echo $(PKG_TEMPLATE)/copyright; fi )
+TEMPLATE_CHANGELOG = $(shell if [ -f $(KMODULE_SRC_DIR)/$(PKG_TEMPLATE)/changelog ]; then echo $(KMODULE_SRC_DIR)/$(PKG_TEMPLATE)/changelog; else echo $(PKG_TEMPLATE)/changelog; fi )
+
+ZADARA_VERSION = $(shell cat $(KMODULE_SRC_DIR)/zadara-version)
+ifeq ($(ZADARA_VERSION),)
+$(error Can't read ZADARA_VERSION from $(KMODULE_SRC_DIR)/zadara-version)
+endif
+PKG_VERSION = $(shell grep Version $(TEMPLATE_CONTROL) | cut -d" " -f2 | sed s/KRELEASE/$(KRELEASE)/g | sed s/ZADARA_VERSION/$(ZADARA_VERSION)/g)
+
+PKG_ARCH    = $(shell dpkg --print-architecture)
+
+DEB_NAME     = $(PKG_NAME)_$(PKG_VERSION)_$(PKG_ARCH).deb
+OUT_DEB_PATH = $(OUT_DIR)/$(DEB_NAME)
+
+path:
+	@echo `readlink -m $(OUT_DEB_PATH)`
+
+pkg: pkg_start pkg_data pkg_control pkg_md5 pkg_deb pkg_lintian
+	@echo
+
+pkg_start:
+	@echo "#################################################################"
+	@echo "#    CREATE PACKAGE $(PKG_NAME), version=$(PKG_VERSION)          "
+	@echo "#################################################################"
+	-$(RM) -r $(PKG_ROOT_DIR)
+
+pkg_data:
+	@$(INSTALL_DIR) $(PKG_ROOT_DIR)/$(PKG_DATA_DIR)
+	@for f in $(PKG_FILES); do $(INSTALL_FILE) $(KMODULE_SRC_DIR)/$$f $(PKG_ROOT_DIR)/$(PKG_DATA_DIR); done
+	if [ "$(KMODULE_INSTALL_EXTRAS)" ]; then $(MAKE) $(MFLAGS) -C $(KMODULE_SRC_DIR) PKG_ROOT_DIR=$(PKG_ROOT_DIR) CONFIG_ZADARA=y install_extras; fi
+
+pkg_control:
+	@$(INSTALL_DIR)		$(PKG_DEBIAN_DIR)
+	@$(INSTALL_DIR)		$(PKG_USRSHR_DIR)
+	@$(INSTALL_DIR)		$(PKG_USRSHR_DIR)/doc
+	@$(INSTALL_DIR)		$(PKG_USRSHR_DIR)/doc/$(PKG_NAME)
+	@[ ! -f $(TEMPLATE_POSTINST) ] || $(INSTALL_SCRIPT)	$(TEMPLATE_POSTINST) $(PKG_DEBIAN_DIR)
+	@[ ! -f $(TEMPLATE_POSTRM) ]   || $(INSTALL_SCRIPT)	$(TEMPLATE_POSTRM)   $(PKG_DEBIAN_DIR)
+	@$(INSTALL_FILE)	$(TEMPLATE_CONTROL)		$(PKG_DEBIAN_DIR)
+	@$(INSTALL_FILE)	$(TEMPLATE_COPYRIGHT)	$(PKG_USRSHR_DIR)/doc/$(PKG_NAME)
+	@$(INSTALL_FILE)	$(TEMPLATE_CHANGELOG)	$(PKG_USRSHR_DIR)/doc/$(PKG_NAME)/changelog
+	@$(INSTALL_FILE)	$(TEMPLATE_CHANGELOG)	$(PKG_USRSHR_DIR)/doc/$(PKG_NAME)/changelog.Debian
+	@for f in $(PKG_DEBIAN_DIR)/control $(PKG_DEBIAN_DIR)/preinst $(PKG_DEBIAN_DIR)/postinst $(PKG_DEBIAN_DIR)/prerm $(PKG_DEBIAN_DIR)/postrm $(PKG_USRSHR_DIR)/doc/$(PKG_NAME)/changelog $(PKG_USRSHR_DIR)/doc/$(PKG_NAME)/changelog.Debian; do	\
+		if [ -f $$f ]; then																	\
+			sed -i "s/ZADARA_VERSION/$(ZADARA_VERSION)/g"	$$f;							\
+			sed -i "s/PKG_NAME/$(PKG_NAME)/g"				$$f;							\
+			sed -i "s/PKG_VERSION/$(PKG_VERSION)/g"			$$f;							\
+			sed -i "s/PKG_ARCH/$(PKG_ARCH)/g"				$$f;							\
+			sed -i "s/KRELEASE/$(KRELEASE)/g"				$$f;							\
+			sed -i "s/KMODULE/$(KMODULE)/g"					$$f;							\
+			sed -i "s/DATE/`date --rfc-2822`/g"				$$f;							\
+		fi																					\
+	done
+	@gzip --best --force $(PKG_USRSHR_DIR)/doc/$(PKG_NAME)/changelog
+	@gzip --best --force $(PKG_USRSHR_DIR)/doc/$(PKG_NAME)/changelog.Debian
+
+pkg_md5:
+	@cd $(PKG_ROOT_DIR); md5sum `find . -type f` > temp1.md5; cd -
+	@sed -e '/DEBIAN/d' -e 's/\.\///g' $(PKG_ROOT_DIR)/temp1.md5 > $(PKG_ROOT_DIR)/temp2.md5
+	@$(INSTALL_FILE) $(PKG_ROOT_DIR)/temp2.md5 $(PKG_DEBIAN_DIR)/md5sums
+	@rm $(PKG_ROOT_DIR)/temp1.md5 $(PKG_ROOT_DIR)/temp2.md5
+
+pkg_deb:
+	@dpkg-deb --build $(PKG_ROOT_DIR) $(OUT_DIR)
+
+pkg_lintian:
+	@-lintian --allow-root --pedantic --suppress-tags unstripped-binary-or-object,tar-errors-from-data,tar-errors-from-control $(OUT_DEB_PATH)

@@ -1,0 +1,10 @@
+Package: zadara-kernel-3.18.19-zadara03-zutils
+Version: 03
+Architecture: amd64
+Depends: linux-image-3.18.19-zadara03
+Section: admin
+Priority: optional
+Maintainer: Zadara Storage <support@zadarastorage.com>
+Homepage: http://www.zadarastorage.com
+Description: zutils kernel module
+ zutils kernel module as available in Linux kernel tree with Zadara changes

@@ -1,0 +1,301 @@
+<!DOCTYPE Project SYSTEM "http://www.slickedit.com/dtd/vse/10.0/vpj.dtd">
+<Project
+	Version="10.0"
+	VendorName="SlickEdit"
+	TemplateName="GNU C/C++"
+	WorkingDir="."
+	BuildSystem="vsbuild">
+	<Config
+		Name="Debug"
+		Type="gnuc"
+		DebugCallbackName="gdb"
+		Version="1"
+		OutputFile="%bd.exe"
+		CompilerConfigName="Latest Version">
+		<Menu>
+			<Target
+				Name="Compile"
+				MenuCaption="&amp;Compile"
+				Dialog="_gnuc_options_form Compile"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				OutputExts="*.o"
+				SaveOption="SaveCurrent"
+				RunFromDir="%rw">
+				<Exec CmdLine='gcc -c %xup  %defd -g -o "%bd%n%oe" %i "%f"'/>
+			</Target>
+			<Target
+				Name="Link"
+				MenuCaption="&amp;Link"
+				ShowOnMenu="Never"
+				Dialog="_gnuc_options_form Link"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveCurrent"
+				RunFromDir="%rw">
+				<Exec CmdLine='gcc %xup -g -o "%o" %f %libs'/>
+			</Target>
+			<Target
+				Name="Build"
+				MenuCaption="&amp;Build"
+				Dialog="_gnuc_options_form Compile"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveWorkspaceFiles"
+				RunFromDir="%rw">
+				<Exec CmdLine='"%(VSLICKBIN1)vsbuild" "%w" "%r" -t build'/>
+			</Target>
+			<Target
+				Name="Rebuild"
+				MenuCaption="&amp;Rebuild"
+				Dialog="_gnuc_options_form Compile"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveWorkspaceFiles"
+				RunFromDir="%rw">
+				<Exec CmdLine='"%(VSLICKBIN1)vsbuild" "%w" "%r" -t rebuild'/>
+			</Target>
+			<Target
+				Name="Debug"
+				MenuCaption="&amp;Debug"
+				Dialog="_gnuc_options_form Run/Debug"
+				BuildFirst="1"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveNone"
+				RunFromDir="%rw">
+				<Exec CmdLine='vsdebugio -prog "%o"'/>
+			</Target>
+			<Target
+				Name="Execute"
+				MenuCaption="E&amp;xecute"
+				Dialog="_gnuc_options_form Run/Debug"
+				BuildFirst="1"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveWorkspaceFiles"
+				RunFromDir="%rw">
+				<Exec CmdLine='"%o"'/>
+			</Target>
+			<Target
+				Name="dash"
+				MenuCaption="-"
+				Deletable="0">
+				<Exec/>
+			</Target>
+			<Target
+				Name="GNU C Options"
+				MenuCaption="GNU C &amp;Options..."
+				ShowOnMenu="HideIfNoCmdLine"
+				Deletable="0"
+				SaveOption="SaveNone">
+				<Exec
+					CmdLine="gnucoptions"
+					Type="Slick-C"/>
+			</Target>
+		</Menu>
+		<List Name="GNUC Options">
+			<Item
+				Name="LinkerOutputType"
+				Value="Executable"/>
+		</List>
+	</Config>
+	<Config
+		Name="Release"
+		Type="gnuc"
+		DebugCallbackName="gdb"
+		Version="1"
+		OutputFile="%bd.exe"
+		CompilerConfigName="Latest Version">
+		<Menu>
+			<Target
+				Name="Compile"
+				MenuCaption="&amp;Compile"
+				Dialog="_gnuc_options_form Compile"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				OutputExts="*.o"
+				SaveOption="SaveCurrent"
+				RunFromDir="%rw">
+				<Exec CmdLine='gcc -c %xup %defd -o "%bd%n%oe" %i "%f"'/>
+			</Target>
+			<Target
+				Name="Link"
+				MenuCaption="&amp;Link"
+				ShowOnMenu="Never"
+				Dialog="_gnuc_options_form Link"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveCurrent"
+				RunFromDir="%rw">
+				<Exec CmdLine='gcc %xup -o "%o" %f %libs'/>
+			</Target>
+			<Target
+				Name="Build"
+				MenuCaption="&amp;Build"
+				Dialog="_gnuc_options_form Compile"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveWorkspaceFiles"
+				RunFromDir="%rw">
+				<Exec CmdLine='"%(VSLICKBIN1)vsbuild" "%w" "%r" -t build'/>
+			</Target>
+			<Target
+				Name="Rebuild"
+				MenuCaption="&amp;Rebuild"
+				Dialog="_gnuc_options_form Compile"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveWorkspaceFiles"
+				RunFromDir="%rw">
+				<Exec CmdLine='"%(VSLICKBIN1)vsbuild" "%w" "%r" -t rebuild'/>
+			</Target>
+			<Target
+				Name="Debug"
+				MenuCaption="&amp;Debug"
+				Dialog="_gnuc_options_form Run/Debug"
+				BuildFirst="1"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveNone"
+				RunFromDir="%rw">
+				<Exec CmdLine='vsdebugio -prog "%o"'/>
+			</Target>
+			<Target
+				Name="Execute"
+				MenuCaption="E&amp;xecute"
+				Dialog="_gnuc_options_form Run/Debug"
+				BuildFirst="1"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveWorkspaceFiles"
+				RunFromDir="%rw">
+				<Exec CmdLine='"%o"'/>
+			</Target>
+			<Target
+				Name="dash"
+				MenuCaption="-"
+				Deletable="0">
+				<Exec/>
+			</Target>
+			<Target
+				Name="GNU C Options"
+				MenuCaption="GNU C &amp;Options..."
+				ShowOnMenu="HideIfNoCmdLine"
+				Deletable="0"
+				SaveOption="SaveNone">
+				<Exec
+					CmdLine="gnucoptions"
+					Type="Slick-C"/>
+			</Target>
+		</Menu>
+		<List Name="GNUC Options">
+			<Item
+				Name="LinkerOutputType"
+				Value="Executable"/>
+		</List>
+	</Config>
+	<CustomFolders>
+		<Folder
+			Name="Source Files"
+			Filters="*.c;*.C;*.cc;*.cpp;*.cp;*.cxx;*.c++;*.prg;*.pas;*.dpr;*.asm;*.s;*.bas;*.java;*.cs;*.sc;*.e;*.cob;*.html;*.rc;*.tcl;*.py;*.pl;*.d;*.m;*.mm;*.go"></Folder>
+		<Folder
+			Name="Header Files"
+			Filters="*.h;*.H;*.hh;*.hpp;*.hxx;*.inc;*.sh;*.cpy;*.if"></Folder>
+		<Folder
+			Name="Resource Files"
+			Filters="*.ico;*.cur;*.dlg"/>
+		<Folder
+			Name="Bitmaps"
+			Filters="*.bmp"/>
+		<Folder
+			Name="Other Files"
+			Filters=""></Folder>
+	</CustomFolders>
+	<Files AutoFolders="PackageView">
+		<F N="bitmap.c"/>
+		<F N="bitmap.h"/>
+		<F N="dm-bio-prison.c"/>
+		<F N="dm-bio-prison.h"/>
+		<F N="dm-bio-record.h"/>
+		<F N="dm-bufio.c"/>
+		<F N="dm-bufio.h"/>
+		<F N="dm-builtin.c"/>
+		<F N="dm-cache-block-types.h"/>
+		<F N="dm-cache-metadata.c"/>
+		<F N="dm-cache-metadata.h"/>
+		<F N="dm-cache-policy-cleaner.c"/>
+		<F N="dm-cache-policy-internal.h"/>
+		<F N="dm-cache-policy-mq.c"/>
+		<F N="dm-cache-policy.c"/>
+		<F N="dm-cache-policy.h"/>
+		<F N="dm-cache-target.c"/>
+		<F N="dm-crypt-z.h"/>
+		<F N="dm-crypt.c"/>
+		<F N="dm-delay.c"/>
+		<F N="dm-era-target.c"/>
+		<F N="dm-exception-store.c"/>
+		<F N="dm-exception-store.h"/>
+		<F N="dm-flakey.c"/>
+		<F N="dm-io.c"/>
+		<F N="dm-ioctl.c"/>
+		<F N="dm-kcopyd.c"/>
+		<F N="dm-linear.c"/>
+		<F N="dm-log-userspace-base.c"/>
+		<F N="dm-log-userspace-transfer.c"/>
+		<F N="dm-log-userspace-transfer.h"/>
+		<F N="dm-log.c"/>
+		<F N="dm-mpath.c"/>
+		<F N="dm-mpath.h"/>
+		<F N="dm-path-selector.c"/>
+		<F N="dm-path-selector.h"/>
+		<F N="dm-queue-length.c"/>
+		<F N="dm-raid.c"/>
+		<F N="dm-raid1.c"/>
+		<F N="dm-region-hash.c"/>
+		<F N="dm-round-robin.c"/>
+		<F N="dm-service-time.c"/>
+		<F N="dm-snap-persistent.c"/>
+		<F N="dm-snap-transient.c"/>
+		<F N="dm-snap.c"/>
+		<F N="dm-stats.c"/>
+		<F N="dm-stats.h"/>
+		<F N="dm-stripe.c"/>
+		<F N="dm-switch.c"/>
+		<F N="dm-sysfs.c"/>
+		<F N="dm-table.c"/>
+		<F N="dm-target.c"/>
+		<F N="dm-thin-metadata.c"/>
+		<F N="dm-thin-metadata.h"/>
+		<F N="dm-thin.c"/>
+		<F N="dm-uevent.c"/>
+		<F N="dm-uevent.h"/>
+		<F N="dm-verity.c"/>
+		<F N="dm-zero.c"/>
+		<F N="dm.c"/>
+		<F N="dm.h"/>
+		<F N="faulty.c"/>
+		<F N="linear.c"/>
+		<F N="linear.h"/>
+		<F
+			N="Makefile"
+			Type="Makefile"/>
+		<F N="md.c"/>
+		<F N="md.h"/>
+		<F N="multipath.c"/>
+		<F N="multipath.h"/>
+		<F N="raid0.c"/>
+		<F N="raid0.h"/>
+		<F N="raid1.c"/>
+		<F N="raid1.h"/>
+		<F N="raid10.c"/>
+		<F N="raid10.h"/>
+		<F N="raid5.c"/>
+		<F N="raid5.h"/>
+		<F N="zadara-version"/>
+		<F N="zmd.c"/>
+		<F N="zmd.h"/>
+		<F N="zraid1.c"/>
+		<F N="zraid1.h"/>
+	</Files>
+</Project>

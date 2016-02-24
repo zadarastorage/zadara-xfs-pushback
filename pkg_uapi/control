@@ -1,0 +1,10 @@
+Package: PKG_NAME
+Version: KRELEASE-ZADARA_VERSION
+Architecture: PKG_ARCH
+Depends:
+Section: admin
+Priority: optional
+Maintainer: Zadara Storage <support@zadarastorage.com>
+Homepage: http://www.zadarastorage.com
+Description: KMODULE headers
+ Zadara headers for KMODULE kernel module

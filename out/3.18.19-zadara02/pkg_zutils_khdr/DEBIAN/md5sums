@@ -1,0 +1,6 @@
+fae248b422182dd551f99f15afee6550  lib/modules/3.18.19-zadara02/build/include/zadara/zbio.h
+d2d5a785500a681fff802a34c3b30ea0  lib/modules/3.18.19-zadara02/build/include/zadara/zklog.h
+5c47d5a48c7b0bc1069ab2b43cc147da  lib/modules/3.18.19-zadara02/build/include/zadara/Module.symvers
+b7719dd8ca5c2e77c5abd66a663cb25e  usr/share/doc/zadara-kernel-3.18.19-zadara02-zutils-headers/copyright
+a4e57d30ea638e23c655e824bd9ab71e  usr/share/doc/zadara-kernel-3.18.19-zadara02-zutils-headers/changelog.gz
+3a03196f2167ba82c7a6360fb07c5f98  usr/share/doc/zadara-kernel-3.18.19-zadara02-zutils-headers/changelog.Debian.gz

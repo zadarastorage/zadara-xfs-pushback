@@ -1,0 +1,5 @@
+PKG_NAME (PKG_VERSION) stable; urgency=low
+
+   * User space headers for KMODULE kernel module
+
+ -- Zadara Storage <support@zadarastorage.com>  DATE

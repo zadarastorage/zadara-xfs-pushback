@@ -1,0 +1,116 @@
+<!DOCTYPE Project SYSTEM "http://www.slickedit.com/dtd/vse/10.0/vpj.dtd">
+<Project
+	Version="10.0"
+	VendorName="SlickEdit"
+	TemplateName="(Other)"
+	WorkingDir=".">
+	<Config
+		Name="Release"
+		OutputFile=""
+		CompilerConfigName="">
+		<Menu>
+			<Target
+				Name="Compile"
+				MenuCaption="&amp;Compile"
+				CaptureOutputWith="ProcessBuffer"
+				SaveOption="SaveCurrent"
+				RunFromDir="%rw">
+				<Exec/>
+			</Target>
+			<Target
+				Name="Build"
+				MenuCaption="&amp;Build"
+				CaptureOutputWith="ProcessBuffer"
+				SaveOption="SaveWorkspaceFiles"
+				RunFromDir="%rw">
+				<Exec/>
+			</Target>
+			<Target
+				Name="Rebuild"
+				MenuCaption="&amp;Rebuild"
+				CaptureOutputWith="ProcessBuffer"
+				SaveOption="SaveWorkspaceFiles"
+				RunFromDir="%rw">
+				<Exec/>
+			</Target>
+			<Target
+				Name="Debug"
+				MenuCaption="&amp;Debug"
+				SaveOption="SaveNone"
+				RunFromDir="%rw">
+				<Exec/>
+			</Target>
+			<Target
+				Name="Execute"
+				MenuCaption="E&amp;xecute"
+				SaveOption="SaveNone"
+				RunFromDir="%rw">
+				<Exec CmdLine='".exe"'/>
+			</Target>
+		</Menu>
+	</Config>
+	<CustomFolders>
+		<Folder
+			Name="Source Files"
+			Filters="*.c;*.C;*.cc;*.cpp;*.cp;*.cxx;*.c++;*.prg;*.pas;*.dpr;*.asm;*.s;*.bas;*.java;*.cs;*.sc;*.e;*.cob;*.html;*.rc;*.tcl;*.py;*.pl;*.d;*.m;*.mm;*.go"></Folder>
+		<Folder
+			Name="Header Files"
+			Filters="*.h;*.H;*.hh;*.hpp;*.hxx;*.inc;*.sh;*.cpy;*.if"></Folder>
+		<Folder
+			Name="Resource Files"
+			Filters="*.ico;*.cur;*.dlg"/>
+		<Folder
+			Name="Bitmaps"
+			Filters="*.bmp"/>
+		<Folder
+			Name="Other Files"
+			Filters=""></Folder>
+	</CustomFolders>
+	<Files AutoFolders="DirectoryView">
+		<F N="acl.h"/>
+		<F N="auth.c"/>
+		<F N="auth.h"/>
+		<F N="cache.h"/>
+		<F N="current_stateid.h"/>
+		<F N="export.c"/>
+		<F N="export.h"/>
+		<F N="fault_inject.c"/>
+		<F N="idmap.h"/>
+		<F N="lockd.c"/>
+		<F
+			N="Makefile"
+			Type="Makefile"/>
+		<F N="netns.h"/>
+		<F N="nfs2acl.c"/>
+		<F N="nfs3acl.c"/>
+		<F N="nfs3proc.c"/>
+		<F N="nfs3xdr.c"/>
+		<F N="nfs4acl.c"/>
+		<F N="nfs4callback.c"/>
+		<F N="nfs4idmap.c"/>
+		<F N="nfs4proc.c"/>
+		<F N="nfs4recover.c"/>
+		<F N="nfs4state.c"/>
+		<F N="nfs4xdr.c"/>
+		<F N="nfscache.c"/>
+		<F N="nfsctl.c"/>
+		<F N="nfsd.h"/>
+		<F N="nfsfh.c"/>
+		<F N="nfsfh.h"/>
+		<F N="nfsproc.c"/>
+		<F N="nfssvc.c"/>
+		<F N="nfsxdr.c"/>
+		<F N="state.h"/>
+		<F N="stats.c"/>
+		<F N="stats.h"/>
+		<F N="vfs.c"/>
+		<F N="vfs.h"/>
+		<F N="xdr.h"/>
+		<F N="xdr3.h"/>
+		<F N="xdr4.h"/>
+		<F N="xdr4cb.h"/>
+		<F N="zadara-version"/>
+		<F N="zstats.c"/>
+		<F N="zstats.h"/>
+	</Files>
+</Project>

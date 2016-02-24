@@ -1,0 +1,10 @@
+Package: zadara-xfs-uapi
+Version: 3.18.19-zadara05-08
+Architecture: amd64
+Depends:
+Section: admin
+Priority: optional
+Maintainer: Zadara Storage <support@zadarastorage.com>
+Homepage: http://www.zadarastorage.com
+Description: xfs headers
+ Zadara headers for xfs kernel module

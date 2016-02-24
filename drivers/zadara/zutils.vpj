@@ -1,0 +1,26 @@
+<!DOCTYPE Project SYSTEM "http://www.slickedit.com/dtd/vse/10.0/vpj.dtd">
+<Project
+	Version="10.0"
+	VendorName="SlickEdit"
+	TemplateName="(Other)"
+	WorkingDir=".">
+	<Config
+		Name="Release"
+		OutputFile=""
+		CompilerConfigName=""></Config>
+	<Files AutoFolders="DirectoryView">
+		<F
+			N="Makefile"
+			Type="Makefile"/>
+		<F N="zadara-version"/>
+		<F N="zbio.c"/>
+		<F N="zbio.h"/>
+		<F N="zchrdev.c"/>
+		<F N="zchrdev.h"/>
+		<F N="zklog.c"/>
+		<F N="zklog.h"/>
+		<F N="zutils.c"/>
+		<F N="zutils.h"/>
+		<F N="zutils_int.h"/>
+	</Files>
+</Project>

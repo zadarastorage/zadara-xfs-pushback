@@ -1,0 +1,7 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "remove" -o "$1" = "purge" ]; then
+	depmod -aq 3.18.19-zadara05
+	update-initramfs -u -k 3.18.19-zadara05
+fi

@@ -1,0 +1,341 @@
+<!DOCTYPE Project SYSTEM "http://www.slickedit.com/dtd/vse/10.0/vpj.dtd">
+<Project
+	Version="10.0"
+	VendorName="SlickEdit"
+	TemplateName="GNU C/C++"
+	WorkingDir="."
+	BuildSystem="vsbuild">
+	<Config
+		Name="Debug"
+		Type="gnuc"
+		DebugCallbackName="gdb"
+		Version="1"
+		OutputFile="%bd.exe"
+		CompilerConfigName="Latest Version">
+		<Menu>
+			<Target
+				Name="Compile"
+				MenuCaption="&amp;Compile"
+				Dialog="_gnuc_options_form Compile"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				OutputExts="*.o"
+				SaveOption="SaveCurrent"
+				RunFromDir="%rw">
+				<Exec CmdLine='gcc -ansi -c %xup  %defd -g -o "%bd%n%oe" %i "%f"'/>
+			</Target>
+			<Target
+				Name="Link"
+				MenuCaption="&amp;Link"
+				ShowOnMenu="Never"
+				Dialog="_gnuc_options_form Link"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveCurrent"
+				RunFromDir="%rw">
+				<Exec CmdLine='gcc -ansi %xup -g -o "%o" %f %libs'/>
+			</Target>
+			<Target
+				Name="Build"
+				MenuCaption="&amp;Build"
+				Dialog="_gnuc_options_form Compile"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveWorkspaceFiles"
+				RunFromDir="%rw">
+				<Exec CmdLine='"%(VSLICKBIN1)vsbuild" "%w" "%r" -t build'/>
+			</Target>
+			<Target
+				Name="Rebuild"
+				MenuCaption="&amp;Rebuild"
+				Dialog="_gnuc_options_form Compile"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveWorkspaceFiles"
+				RunFromDir="%rw">
+				<Exec CmdLine='"%(VSLICKBIN1)vsbuild" "%w" "%r" -t rebuild'/>
+			</Target>
+			<Target
+				Name="Debug"
+				MenuCaption="&amp;Debug"
+				Dialog="_gnuc_options_form Run/Debug"
+				BuildFirst="1"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveNone"
+				RunFromDir="%rw">
+				<Exec CmdLine='vsdebugio -prog "%o"'/>
+			</Target>
+			<Target
+				Name="Execute"
+				MenuCaption="E&amp;xecute"
+				Dialog="_gnuc_options_form Run/Debug"
+				BuildFirst="1"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveWorkspaceFiles"
+				RunFromDir="%rw">
+				<Exec CmdLine='"%o"'/>
+			</Target>
+			<Target
+				Name="dash"
+				MenuCaption="-"
+				Deletable="0">
+				<Exec/>
+			</Target>
+			<Target
+				Name="GNU C Options"
+				MenuCaption="GNU C &amp;Options..."
+				ShowOnMenu="HideIfNoCmdLine"
+				Deletable="0"
+				SaveOption="SaveNone">
+				<Exec
+					CmdLine="gnucoptions"
+					Type="Slick-C"/>
+			</Target>
+		</Menu>
+		<List Name="GNUC Options">
+			<Item
+				Name="LinkerOutputType"
+				Value="Executable"/>
+		</List>
+	</Config>
+	<Config
+		Name="Release"
+		Type="gnuc"
+		DebugCallbackName="gdb"
+		Version="1"
+		OutputFile="%bd.exe"
+		CompilerConfigName="Latest Version">
+		<Menu>
+			<Target
+				Name="Compile"
+				MenuCaption="&amp;Compile"
+				Dialog="_gnuc_options_form Compile"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				OutputExts="*.o"
+				SaveOption="SaveCurrent"
+				RunFromDir="%rw">
+				<Exec CmdLine='gcc -ansi -c %xup %defd -o "%bd%n%oe" %i "%f"'/>
+			</Target>
+			<Target
+				Name="Link"
+				MenuCaption="&amp;Link"
+				ShowOnMenu="Never"
+				Dialog="_gnuc_options_form Link"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveCurrent"
+				RunFromDir="%rw">
+				<Exec CmdLine='gcc -ansi %xup -o "%o" %f %libs'/>
+			</Target>
+			<Target
+				Name="Build"
+				MenuCaption="&amp;Build"
+				Dialog="_gnuc_options_form Compile"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveWorkspaceFiles"
+				RunFromDir="%rw">
+				<Exec CmdLine='"%(VSLICKBIN1)vsbuild" "%w" "%r" -t build'/>
+			</Target>
+			<Target
+				Name="Rebuild"
+				MenuCaption="&amp;Rebuild"
+				Dialog="_gnuc_options_form Compile"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveWorkspaceFiles"
+				RunFromDir="%rw">
+				<Exec CmdLine='"%(VSLICKBIN1)vsbuild" "%w" "%r" -t rebuild'/>
+			</Target>
+			<Target
+				Name="Debug"
+				MenuCaption="&amp;Debug"
+				Dialog="_gnuc_options_form Run/Debug"
+				BuildFirst="1"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveNone"
+				RunFromDir="%rw">
+				<Exec CmdLine='vsdebugio -prog "%o"'/>
+			</Target>
+			<Target
+				Name="Execute"
+				MenuCaption="E&amp;xecute"
+				Dialog="_gnuc_options_form Run/Debug"
+				BuildFirst="1"
+				CaptureOutputWith="ProcessBuffer"
+				Deletable="0"
+				SaveOption="SaveWorkspaceFiles"
+				RunFromDir="%rw">
+				<Exec CmdLine='"%o"'/>
+			</Target>
+			<Target
+				Name="dash"
+				MenuCaption="-"
+				Deletable="0">
+				<Exec/>
+			</Target>
+			<Target
+				Name="GNU C Options"
+				MenuCaption="GNU C &amp;Options..."
+				ShowOnMenu="HideIfNoCmdLine"
+				Deletable="0"
+				SaveOption="SaveNone">
+				<Exec
+					CmdLine="gnucoptions"
+					Type="Slick-C"/>
+			</Target>
+		</Menu>
+		<List Name="GNUC Options">
+			<Item
+				Name="LinkerOutputType"
+				Value="Executable"/>
+		</List>
+	</Config>
+	<CustomFolders>
+		<Folder
+			Name="Source Files"
+			Filters="*.c;*.C;*.cc;*.cpp;*.cp;*.cxx;*.c++;*.prg;*.pas;*.dpr;*.asm;*.s;*.bas;*.java;*.cs;*.sc;*.e;*.cob;*.html;*.rc;*.tcl;*.py;*.pl;*.d;*.m;*.mm;*.go"></Folder>
+		<Folder
+			Name="Header Files"
+			Filters="*.h;*.H;*.hh;*.hpp;*.hxx;*.inc;*.sh;*.cpy;*.if"></Folder>
+		<Folder
+			Name="Resource Files"
+			Filters="*.ico;*.cur;*.dlg"/>
+		<Folder
+			Name="Bitmaps"
+			Filters="*.bmp"/>
+		<Folder
+			Name="Other Files"
+			Filters=""></Folder>
+	</CustomFolders>
+	<Files AutoFolders="DirectoryView">
+		<Folder Name="pkg">
+			<F N="pkg/control"/>
+		</Folder>
+		<Folder Name="tests">
+			<F N="tests/btrfs-tests.c"/>
+			<F N="tests/btrfs-tests.h"/>
+			<F N="tests/extent-buffer-tests.c"/>
+			<F N="tests/extent-io-tests.c"/>
+			<F N="tests/free-space-tests.c"/>
+			<F N="tests/inode-tests.c"/>
+			<F N="tests/qgroup-tests.c"/>
+			<F N="tests/zjournal-tests.c"/>
+			<F N="tests/ztenant-tests.c"/>
+		</Folder>
+		<F N="acl.c"/>
+		<F N="async-thread.c"/>
+		<F N="async-thread.h"/>
+		<F N="backref.c"/>
+		<F N="backref.h"/>
+		<F N="btrfs_inode.h"/>
+		<F N="check-integrity.c"/>
+		<F N="check-integrity.h"/>
+		<F N="compression.c"/>
+		<F N="compression.h"/>
+		<F N="ctree.c"/>
+		<F N="ctree.h"/>
+		<F N="delayed-inode.c"/>
+		<F N="delayed-inode.h"/>
+		<F N="delayed-ref.c"/>
+		<F N="delayed-ref.h"/>
+		<F N="dev-replace.c"/>
+		<F N="dev-replace.h"/>
+		<F N="dir-item.c"/>
+		<F N="disk-io.c"/>
+		<F N="disk-io.h"/>
+		<F N="export.c"/>
+		<F N="export.h"/>
+		<F N="extent-tree.c"/>
+		<F N="extent_io.c"/>
+		<F N="extent_io.h"/>
+		<F N="extent_map.c"/>
+		<F N="extent_map.h"/>
+		<F N="file-item.c"/>
+		<F N="file.c"/>
+		<F N="free-space-cache.c"/>
+		<F N="free-space-cache.h"/>
+		<F N="hash.c"/>
+		<F N="hash.h"/>
+		<F N="inode-item.c"/>
+		<F N="inode-map.c"/>
+		<F N="inode-map.h"/>
+		<F N="inode.c"/>
+		<F N="ioctl.c"/>
+		<F N="locking.c"/>
+		<F N="locking.h"/>
+		<F N="lzo.c"/>
+		<F
+			N="Makefile"
+			Type="Makefile"/>
+		<F N="math.h"/>
+		<F N="ordered-data.c"/>
+		<F N="ordered-data.h"/>
+		<F N="orphan.c"/>
+		<F N="print-tree.c"/>
+		<F N="print-tree.h"/>
+		<F N="props.c"/>
+		<F N="props.h"/>
+		<F N="qgroup.c"/>
+		<F N="qgroup.h"/>
+		<F N="raid56.c"/>
+		<F N="raid56.h"/>
+		<F N="rcu-string.h"/>
+		<F N="reada.c"/>
+		<F N="relocation.c"/>
+		<F N="root-tree.c"/>
+		<F N="scrub.c"/>
+		<F N="send.c"/>
+		<F N="send.h"/>
+		<F N="struct-funcs.c"/>
+		<F N="super.c"/>
+		<F N="sysfs.c"/>
+		<F N="sysfs.h"/>
+		<F N="transaction.c"/>
+		<F N="transaction.h"/>
+		<F N="tree-defrag.c"/>
+		<F N="tree-log.c"/>
+		<F N="tree-log.h"/>
+		<F N="ulist.c"/>
+		<F N="ulist.h"/>
+		<F N="uuid-tree.c"/>
+		<F N="volumes.c"/>
+		<F N="volumes.h"/>
+		<F N="xattr.c"/>
+		<F N="xattr.h"/>
+		<F N="zadara-version"/>
+		<F N="zbtrfs-block-virt.c"/>
+		<F N="zbtrfs-block-virt.h"/>
+		<F N="zbtrfs-control.c"/>
+		<F N="zbtrfs-exported.h"/>
+		<F N="zbtrfs.c"/>
+		<F N="zbtrfs.h"/>
+		<F N="zchanged-chunks.c"/>
+		<F N="zchanged-chunks.h"/>
+		<F N="zctree.c"/>
+		<F N="zctree.h"/>
+		<F N="zextent-tree.c"/>
+		<F N="zioctl.c"/>
+		<F N="zioctl.h"/>
+		<F N="zjournal.c"/>
+		<F N="zjournal.h"/>
+		<F N="zjournal_mount.c"/>
+		<F N="zjournal_open.c"/>
+		<F N="zjournal_pool.c"/>
+		<F N="zjournal_replay.c"/>
+		<F N="zjournal_sysfs.c"/>
+		<F N="zjournal_write.c"/>
+		<F N="zlib.c"/>
+		<F N="zmisc.h"/>
+		<F N="zsend.c"/>
+		<F N="zstats.c"/>
+		<F N="zsysfs.c"/>
+		<F N="ztenant-tree.c"/>
+		<F N="ztenant-tree.h"/>
+		<F N="zvolumes.c"/>
+	</Files>
+</Project>

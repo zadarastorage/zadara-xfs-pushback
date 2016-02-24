@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = "configure" ]; then
+	echo "=== Reload udev rules === "
+	udevadm control --reload-rules
+
+	depmod -aq KRELEASE
+	update-initramfs -u -k KRELEASE
+fi
