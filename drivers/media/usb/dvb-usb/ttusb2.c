@@ -438,9 +438,9 @@ static int tt3650_rc_query(struct dvb_usb_device *d)
 
 	if (rx[8] & 0x01) {
 		/* got a "press" event */
-		st->last_rc_key = (rx[3] << 8) | rx[2];
+		st->last_rc_key = RC_SCANCODE_RC5(rx[3], rx[2]);
 		deb_info("%s: cmd=0x%02x sys=0x%02x\n", __func__, rx[2], rx[3]);
-		rc_keydown(d->rc_dev, st->last_rc_key, rx[1]);
+		rc_keydown(d->rc_dev, RC_TYPE_RC5, st->last_rc_key, rx[1]);
 	} else if (st->last_rc_key) {
 		rc_keyup(d->rc_dev);
 		st->last_rc_key = 0;
@@ -620,6 +620,8 @@ static struct usb_device_id ttusb2_table [] = {
 		USB_PID_TECHNOTREND_CONNECT_S2400) },
 	{ USB_DEVICE(USB_VID_TECHNOTREND,
 		USB_PID_TECHNOTREND_CONNECT_CT3650) },
+	{ USB_DEVICE(USB_VID_TECHNOTREND,
+		USB_PID_TECHNOTREND_CONNECT_S2400_8KEEPROM) },
 	{}		/* Terminating entry */
 };
 MODULE_DEVICE_TABLE (usb, ttusb2_table);
@@ -721,10 +723,14 @@ static struct dvb_usb_device_properties ttusb2_properties_s2400 = {
 
 	.generic_bulk_ctrl_endpoint = 0x01,
 
-	.num_device_descs = 1,
+	.num_device_descs = 2,
 	.devices = {
 		{   "Technotrend TT-connect S-2400",
 			{ &ttusb2_table[2], NULL },
+			{ NULL },
+		},
+		{   "Technotrend TT-connect S-2400 (8kB EEPROM)",
+			{ &ttusb2_table[4], NULL },
 			{ NULL },
 		},
 	}
@@ -741,7 +747,7 @@ static struct dvb_usb_device_properties ttusb2_properties_ct3650 = {
 		.rc_interval      = 150, /* Less than IR_KEYPRESS_TIMEOUT */
 		.rc_codes         = RC_MAP_TT_1500,
 		.rc_query         = tt3650_rc_query,
-		.allowed_protos   = RC_BIT_UNKNOWN,
+		.allowed_protos   = RC_BIT_RC5,
 	},
 
 	.num_adapters = 1,

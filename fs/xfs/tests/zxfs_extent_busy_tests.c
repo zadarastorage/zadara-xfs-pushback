@@ -1,12 +1,15 @@
 #ifdef CONFIG_XFS_ZADARA
-#include "../xfs.h"
-#include "../xfs_sb.h"
-#include "../xfs_mount.h"
-#include "../xfs_ag.h"
-#include "../xfs_alloc.h"
-#include "../xfs_extent_busy.h"
-#include "../xfs_log.h"
-#include "../xfs_trans.h"
+#include "xfs.h"
+#include "xfs_sb.h"
+#include "xfs_ag.h"
+#include "xfs_trans_resv.h"
+#include "xfs_alloc.h"
+#include "xfs_log_format.h"
+#include "xfs_log.h"
+#include "xfs_mount.h"
+#include "xfs_extent_busy.h"
+#include "xfs_trans.h"
+#include "xfs_shared.h"
 #include "zxfs_tests.h"
 
 /*********** helpers ***********************************/
@@ -104,7 +107,7 @@ STATIC int alloc_mp(unsigned int discard_gran_bytes, xfs_mount_t **out_mp)
 	INIT_RADIX_TREE(&mp->m_perag_tree, GFP_ATOMIC);
 
 	/* ddev_targp */
-	ddev_targp = xfs_alloc_buftarg(mp, bdev, 0, mp->m_fsname);
+	ddev_targp = xfs_alloc_buftarg(mp, bdev);
 	error = ddev_targp ? 0 : -ENOMEM;
 	CALL_SHOULD_SUCCEED(error , xfs_alloc_buftarg);
 	mp->m_ddev_targp = ddev_targp;
@@ -136,6 +139,7 @@ STATIC int alloc_mp(unsigned int discard_gran_bytes, xfs_mount_t **out_mp)
 
 	zmp = &mp->m_zxfs;
 	atomic64_set(&zmp->shutdown_flags, 0);
+	atomic_set(&zmp->corruption_detected, 0);
 	zmp->discard_gran_bbs = BTOBBT(discard_gran_bytes);
 	atomic_set(&zmp->total_discard_ranges, 0);
 	zmp->online_discard = 1;
@@ -1165,7 +1169,7 @@ test_discard_ranges_register(void)
 	error = __verify_busy_and_discard_trees(mp, pag, tbusy, ARRAY_SIZE(tbusy), tdrs, ARRAY_SIZE(tbusy));
 	CALL_SHOULD_SUCCEED(error , __verify_busy_and_discard_trees);
 
-	ZXFSLOG_TAG(mp, Z_KINFO, ZKLOG_TAG_BUSY_EXT, "== new discard range starts within existing");
+	ZXFSLOG_TAG(mp, Z_KINFO, ZKLOG_TAG_BUSY_EXT, "=== new discard range starts within existing");
 	TBUSY(5, 18*fsbs_per_dchunk + 100, 10,  true);
 	TDR(5, mp, 18*fsbs_per_dchunk, fsbs_per_dchunk, false/*in_dr*/, false/*attached*/, 0);
 	xfs_extent_busy_insert(tps[5], agno, tbusy[5].bno, tbusy[5].length, 0/*flags*/, tdrs[5].dbno/*merged_bno*/, tdrs[5].dlen/*merged_len*/);
@@ -1612,7 +1616,7 @@ test_discard_ranges_check(void)
 	COND_SHOULD_HOLD(RB_EMPTY_ROOT(&pag->pagb_tree), RB_EMPTY_ROOT(&pag->pagb_tree));
 	COND_SHOULD_HOLD(RB_EMPTY_ROOT(&pag->pagb_zdr_tree), RB_EMPTY_ROOT(pag->&pagb_zdr_tree));
 
-	ZXFSLOG_TAG(mp, Z_KINFO, ZKLOG_TAG_BUSY_EXT, "== more complex discard-range movearounds");
+	ZXFSLOG_TAG(mp, Z_KINFO, ZKLOG_TAG_BUSY_EXT, "=== more complex discard-range movearounds");
 	TBUSY(0, 22*fsbs_per_dchunk + 120, 20, true);
 	xfs_extent_busy_insert(tps[0], agno, tbusy[0].bno, tbusy[0].length, 0/*flags*/, NULLAGBLOCK/*merged_bno*/, 0/*merged_len*/);
 	error = __verify_busy_and_discard_trees(mp, pag, tbusy, ARRAY_SIZE(tbusy), tdrs, ARRAY_SIZE(tbusy));

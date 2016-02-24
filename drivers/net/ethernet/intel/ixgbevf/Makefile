@@ -36,3 +36,8 @@ ixgbevf-objs := vf.o \
                 ethtool.o \
                 ixgbevf_main.o
 
+ifeq ($(CONFIG_ZADARA),y)
+ccflags-y += -DCONFIG_IXGBEVF_ZADARA
+ccflags-y += -Wall                      # Enable most warning messages
+ccflags-y += -g
+endif

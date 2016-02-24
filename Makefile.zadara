@@ -1,32 +1,256 @@
-KRELEASE            = $(shell uname -r)
+CONFIG_FILE := ./configs/config-zadara
+LN_CONFIG_ERR := $(shell [ -L .config ] || ln -s $(CONFIG_FILE) .config 2>&1)
+ZREVISION := $(shell cat ./configs/zadara-kernel-revision)
+KRELEASE  := $(shell $(MAKE) $(MFLAGS) -s kernelrelease LOCALVERSION=$(ZREVISION))
+OUTDIR    := $(CURDIR)/out/$(KRELEASE)
 
-XFS_SRC_DIR       = $(CURDIR)/fs/xfs
-XFS_KO            = $(XFS_SRC_DIR)/xfs.ko
-XFS_HDRS          = $(XFS_SRC_DIR)/xfs_fs.h $(XFS_SRC_DIR)/zxfs_fs.h
+NPROC := $(shell nproc)
+
+ifeq ($(LN_CONFIG_ERR),)
+ONDISK_CONFIG_FILE := $(shell readlink .config)
+ifneq ($(ONDISK_CONFIG_FILE), $(CONFIG_FILE))
+$(error WARNING: Old config: $(ONDISK_CONFIG_FILE). New config: $(CONFIG_FILE). Fixing .config alone is not enough; run 'make mrproper' !!! )
+endif
+else
+$(error $(LN_CONFIG_ERR))
+endif
+
+ifeq ($(ZREVISION),)
+$(error Can't read ZREVISION from ./configs/zadara-kernel-revision)
+endif
+
+ifeq ($(KRELEASE),)
+$(error Can't get KRELEASE)
+endif
+
+################################################################
+#
+#	KERNEL MODULE DEFINITIONS
+#
+#	Main package: KMODULE_PKG_NAME = zadara-kernel-$(KRELEASE)-XXX
+#	XXX_src_dir     = Source directory. Full path will be KMODULE_SRC_DIR = $(CURDIR)/$(XXX_src_dir)
+#	XXX_install_dir = Module install directory. Full path will be KMODULE_PKG_DATA_DIR = /lib/modules/$(KRELEASE)/$(XXX_install_dir)
+#	XXX_ko          = List of kernel objects
+#	XXX_depends_zutils - If set to 1, zutils will be compiled prior the module XXX
+#	XXX_install_extras - If set to 1, modules makefile may install additional files in rule install_extras
+#
+#	Optional kernal space headers package: KMODULE_PKG_KHDR_NAME = zadara-XXX-headers
+#	XXX_install_khdr_dir = Kernel space headers install directory. Full path will be KMODULE_PKG_KHDR_DATA_DIR = /lib/modules/$(KRELEASE)/build/$(XXX_install_khdr_dir)
+#	XXX_khdr             = List of exported kernel space headers
+#
+#	Optional user space headers package: KMODULE_PKG_UAPI_NAME = zadara-XXX-uapi
+#	XXX_install_uapi_dir = User space headers install directory. Full path will be KMODULE_PKG_UAPI_DATA_DIR = /usr/include/zadara/$(XXX_install_uapi_dir)
+#	XXX_uapi             = List of exported user space headers
+#
+
+md_src_dir          = /drivers/md
+md_install_dir      = /kernel/drivers/md
+md_ko               = md-mod.ko raid1.ko raid456.ko dm-multipath.ko dm-crypt.ko
+md_depends_zutils   = 1
+md_install_uapi_dir = /
+md_uapi             = dm-crypt-z.h
+
+scsi_src_dir        = /drivers/scsi
+scsi_install_dir    = /kernel/drivers/scsi
+scsi_ko             = iscsi_tcp.ko libiscsi.ko libiscsi_tcp.ko scsi_transport_iscsi.ko scsi_mod.ko
+
+ixgbe_src_dir     = /drivers/net/ethernet/intel/ixgbe
+ixgbe_install_dir = /kernel/drivers/net/ethernet/intel/ixgbe
+ixgbe_ko          = ixgbe.ko
+
+ixgbevf_src_dir     = /drivers/net/ethernet/intel/ixgbevf
+ixgbevf_install_dir = /kernel/drivers/net/ethernet/intel/ixgbevf
+ixgbevf_ko          = ixgbevf.ko
+
+i40e_src_dir     = /drivers/net/ethernet/intel/i40e
+i40e_install_dir = /kernel/drivers/net/ethernet/intel/i40e
+i40e_ko          = i40e.ko
+
+zutils_src_dir          = /drivers/zadara
+zutils_install_dir      = /kernel/drivers/zadara
+zutils_ko               = zadara-utils.ko
+zutils_install_khdr_dir = /include/zadara
+zutils_khdr             = zbio.h zklog.h zutils.h zchrdev.h
+
+nfsd_src_dir     = /fs/nfsd
+nfsd_install_dir = /kernel/fs/nfsd
+nfsd_ko          = nfsd.ko
+
+xfs_src_dir          = /fs/xfs
+xfs_install_dir      = /kernel/fs/xfs
+xfs_ko               = xfs.ko
+xfs_depends_zutils   = 1
+xfs_install_uapi_dir = /xfs
+xfs_uapi             = zxfs.h zxfs_fs.h xfs_fs.h
+
+btrfs_src_dir            = /fs/btrfs
+btrfs_install_dir        = /kernel/fs/btrfs
+btrfs_ko                 = btrfs.ko
+btrfs_depends_zutils     = 1
+btrfs_install_khdr_dir   = /include/zadara/btrfs
+btrfs_khdr               = zbtrfs-exported.h
+btrfs_install_uapi_dir   = /btrfs
+btrfs_uapi               = send.h zioctl.h
+
+bonding_src_dir     = /drivers/net/bonding
+bonding_install_dir = /kernel/drivers/net/bonding
+bonding_ko          = bonding.ko
+
+megaraid_src_dir     = /drivers/scsi/megaraid
+megaraid_install_dir = /kernel/drivers/scsi/megaraid
+megaraid_ko          = megaraid_sas.ko
+
+qla2xxx_src_dir          = /drivers/scsi/qla2xxx
+qla2xxx_install_dir      = /kernel/drivers/scsi/qla2xxx
+qla2xxx_ko               = qla2xxx.ko
+qla2xxx_install_extras   = 1
+qla2xxx_install_khdr_dir = /drivers/scsi/qla2xxx
+qla2xxx_khdr             = qla_def.h qla_bsg.h qla_nx.h qla_nx2.h qla_sriov.h qla_dfs.h qla_settings.h qla_version.h qla_fw.h qla_mr.h qla_gbl.h qla_dbg.h qla_inline.h qla2x_tgt.h qla2x_tgt_def.h
+
+################################################################
+#
+#	KERNEL MODULE RULES
+
+pkg_% pkg_path_% clean_% make_% %_build_pkg %_build_pkg_khdr %_build_pkg_uapi: KMODULE = $*
+pkg_% pkg_path_% clean_% make_% %_build_pkg %_build_pkg_khdr %_build_pkg_uapi: KMODULE_SRC_DIR = $(CURDIR)/$($*_src_dir)
+
+pkg_% pkg_path_% clean_% make_% %_build_pkg %_build_pkg_khdr %_build_pkg_uapi: KMODULE_PKG_NAME = zadara-kernel-$(KRELEASE)-$(KMODULE)
+pkg_% pkg_path_% clean_% make_% %_build_pkg %_build_pkg_khdr %_build_pkg_uapi: KMODULE_PKG_ROOT_DIR = $(OUTDIR)/pkg_$*
+pkg_% pkg_path_% clean_% make_% %_build_pkg %_build_pkg_khdr %_build_pkg_uapi: KMODULE_PKG_DATA_DIR = /lib/modules/$(KRELEASE)/$($*_install_dir)
+pkg_% pkg_path_% clean_% make_% %_build_pkg %_build_pkg_khdr %_build_pkg_uapi: KMODULE_KO = $($*_ko)
+pkg_% pkg_path_% clean_% make_% %_build_pkg %_build_pkg_khdr %_build_pkg_uapi: KMODULE_DEPENDS_ZUTILS = $($*_depends_zutils)
+pkg_% pkg_path_% clean_% make_% %_build_pkg %_build_pkg_khdr %_build_pkg_uapi: KMODULE_INSTALL_EXTRAS = $($*_install_extras)
+
+pkg_% pkg_path_% clean_% make_% %_build_pkg %_build_pkg_khdr %_build_pkg_uapi: KMODULE_PKG_KHDR_NAME = zadara-kernel-$(KRELEASE)-$(KMODULE)-headers
+pkg_% pkg_path_% clean_% make_% %_build_pkg %_build_pkg_khdr %_build_pkg_uapi: KMODULE_PKG_KHDR_ROOT_DIR = $(OUTDIR)/pkg_$*_khdr
+pkg_% pkg_path_% clean_% make_% %_build_pkg %_build_pkg_khdr %_build_pkg_uapi: KMODULE_PKG_KHDR_DATA_DIR = /lib/modules/$(KRELEASE)/build/$($*_install_khdr_dir)
+pkg_% pkg_path_% clean_% make_% %_build_pkg %_build_pkg_khdr %_build_pkg_uapi: KMODULE_KHDR = $($*_khdr)
+
+pkg_% pkg_path_% clean_% make_% %_build_pkg %_build_pkg_khdr %_build_pkg_uapi: KMODULE_PKG_UAPI_NAME = zadara-$(KMODULE)-uapi
+pkg_% pkg_path_% clean_% make_% %_build_pkg %_build_pkg_khdr %_build_pkg_uapi: KMODULE_PKG_UAPI_ROOT_DIR = $(OUTDIR)/pkg_$*_uapi
+pkg_% pkg_path_% clean_% make_% %_build_pkg %_build_pkg_khdr %_build_pkg_uapi: KMODULE_PKG_UAPI_DATA_DIR = /usr/include/zadara/$($*_install_uapi_dir)
+pkg_% pkg_path_% clean_% make_% %_build_pkg %_build_pkg_khdr %_build_pkg_uapi: KMODULE_UAPI = $($*_uapi)
+
+pkg_%: check_root %_build_pkg %_build_pkg_khdr %_build_pkg_uapi
+	@echo
+
+pkg_path_%:
+	$(MAKE) $(MFLAGS) -f Makefile.pkg path KRELEASE=$(KRELEASE) KMODULE=$(KMODULE) KMODULE_SRC_DIR=$(KMODULE_SRC_DIR) PKG_TEMPLATE=pkg PKG_NAME=$(KMODULE_PKG_NAME) PKG_ROOT_DIR=$(KMODULE_PKG_ROOT_DIR)
+	@if [ "$(KMODULE_KHDR)" ]; then 																																										\
+		$(MAKE) $(MFLAGS) -f Makefile.pkg path KRELEASE=$(KRELEASE) KMODULE=$(KMODULE) KMODULE_SRC_DIR=$(KMODULE_SRC_DIR) PKG_TEMPLATE=pkg_khdr PKG_NAME=$(KMODULE_PKG_KHDR_NAME) PKG_ROOT_DIR=$(KMODULE_PKG_KHDR_ROOT_DIR);	\
+	fi
+	@if [ "$(KMODULE_UAPI)" ]; then 																																										\
+		$(MAKE) $(MFLAGS) -f Makefile.pkg path KRELEASE=$(KRELEASE) KMODULE=$(KMODULE) KMODULE_SRC_DIR=$(KMODULE_SRC_DIR) PKG_TEMPLATE=pkg_uapi PKG_NAME=$(KMODULE_PKG_UAPI_NAME) PKG_ROOT_DIR=$(KMODULE_PKG_UAPI_ROOT_DIR);	\
+	fi
+	
+clean_%: check_root
+	$(MAKE) $(MFLAGS) -C /lib/modules/$(KRELEASE)/build M=$(KMODULE_SRC_DIR) CONFIG_ZADARA=y clean
+	-$(RM) -r $(KMODULE_PKG_ROOT_DIR)
+	-$(RM) -r $(KMODULE_PKG_KHDR_ROOT_DIR)
+	-$(RM) -r $(KMODULE_PKG_UAPI_ROOT_DIR)
+
+make_%:
+	@test $(KMODULE_SRC_DIR) || (echo ERROR: $*_src_dir not defined; exit 1)
+	@if [ "$(KMODULE_DEPENDS_ZUTILS)" = 1 ]; then echo "make zutils"; $(MAKE) $(MFLAGS) -C /lib/modules/$(KRELEASE)/build M=$(CURDIR)/$(zutils_src_dir) CONFIG_ZADARA=y $(zutils_ko); fi
+	$(MAKE) $(MFLAGS) -C /lib/modules/$(KRELEASE)/build M=$(KMODULE_SRC_DIR) CONFIG_ZADARA=y $(KMODULE_KO)
+	@echo
+	@for ko in $(KMODULE_KO); do echo $$ko `modinfo $(KMODULE_SRC_DIR)/$$ko | grep srcversion`; done
+	@echo
+
+%_build_pkg: make_%
+	$(MAKE)     $(MFLAGS) -f Makefile.pkg pkg KRELEASE=$(KRELEASE) KMODULE=$(KMODULE) KMODULE_SRC_DIR=$(KMODULE_SRC_DIR) KMODULE_INSTALL_EXTRAS=$(KMODULE_INSTALL_EXTRAS) PKG_TEMPLATE=pkg      PKG_NAME=$(KMODULE_PKG_NAME)      PKG_ROOT_DIR=$(KMODULE_PKG_ROOT_DIR)      PKG_DATA_DIR=$(KMODULE_PKG_DATA_DIR)      PKG_FILES="$(KMODULE_KO)"
+
+%_build_pkg_khdr:
+	@if [ "$(KMODULE_KHDR)" ]; then 																																																																																\
+		$(MAKE) $(MFLAGS) -f Makefile.pkg pkg KRELEASE=$(KRELEASE) KMODULE=$(KMODULE) KMODULE_SRC_DIR=$(KMODULE_SRC_DIR)                                                  PKG_TEMPLATE=pkg_khdr PKG_NAME=$(KMODULE_PKG_KHDR_NAME) PKG_ROOT_DIR=$(KMODULE_PKG_KHDR_ROOT_DIR) PKG_DATA_DIR=$(KMODULE_PKG_KHDR_DATA_DIR) PKG_FILES="$(KMODULE_KHDR) Module.symvers";	\
+	fi
+
+%_build_pkg_uapi:
+	@if [ "$(KMODULE_UAPI)" ]; then 																																																																												\
+		$(MAKE) $(MFLAGS) -f Makefile.pkg pkg KRELEASE=$(KRELEASE) KMODULE=$(KMODULE) KMODULE_SRC_DIR=$(KMODULE_SRC_DIR)                                                  PKG_TEMPLATE=pkg_uapi PKG_NAME=$(KMODULE_PKG_UAPI_NAME) PKG_ROOT_DIR=$(KMODULE_PKG_UAPI_ROOT_DIR) PKG_DATA_DIR=$(KMODULE_PKG_UAPI_DATA_DIR) PKG_FILES="$(KMODULE_UAPI)";	\
+	fi
+
+################################################################
+#
+#	CHECK ROOT
+
+.PHONY: check_root
+
+check_root:
+	@test $(USER) = root
 
 
-.PHONY: xfs xfs_direct_install
+################################################################
+#
+#	BTRFS
+
+btrfs_direct_install: make_btrfs
+	mkdir -p /lib/modules/$(KRELEASE)/$(btrfs_install_dir)
+	cp --remove-destination $(CURDIR)/$(btrfs_src_dir)/$(btrfs_ko)         /lib/modules/$(KRELEASE)/$(btrfs_install_dir)
+	mkdir -p /lib/modules/$(KRELEASE)/build/$(btrfs_install_khdr_dir)
+	for khdr in $(btrfs_khdr); do cp $(CURDIR)/$(btrfs_src_dir)/$$khdr     /lib/modules/$(KRELEASE)/build/$(btrfs_install_khdr_dir); done
+	cp $(CURDIR)/$(btrfs_src_dir)/Module.symvers /lib/modules/$(KRELEASE)/build/$(btrfs_install_khdr_dir)
+	mkdir -p /usr/include/zadara/$(btrfs_install_uapi_dir)
+	for uhdr in $(btrfs_uapi); do cp $(CURDIR)/$(btrfs_src_dir)/$$uhdr /usr/include/zadara/$(btrfs_install_uapi_dir); done
 
 
-xfs: $(XFS_KO)
+################################################################
+#
+#	CLEAN ALL
 
-$(XFS_KO): $(XFS_SRC_DIR)/*.c $(XFS_SRC_DIR)/*.h  $(XFS_SRC_DIR)/tests/*.c $(XFS_SRC_DIR)/tests/*.h
-	$(MAKE) -C /lib/modules/$(KRELEASE)/build M=$(XFS_SRC_DIR) EXTRA_CFLAGS=-g modules
+.PHONY: clean clean_all
 
-xfs_direct_install: $(XFS_KO)
-	cp --remove-destination $(XFS_KO)    /lib/modules/$(KRELEASE)/kernel/fs/xfs/
-	mkdir -p /usr/local/include/zxfs
-	cp $(XFS_HDRS)                         /usr/local/include/zxfs
-	cp $(XFS_SRC_DIR)/Module.symvers     /usr/local/include/zxfs
-
-xfs_direct_install_tmp: $(XFS_KO)
-	cp $(XFS_KO)                         /tmp
-	[ -h /lib/modules/$(KRELEASE)/kernel/fs/xfs/xfs.ko ] || ln -s /tmp/xfs.ko /lib/modules/$(KRELEASE)/kernel/fs/xfs/xfs.ko
-	mkdir -p /usr/local/include/zxfs
-	cp $(XFS_HDRS)                       /usr/local/include/zxfs
-	cp $(XFS_SRC_DIR)/Module.symvers     /usr/local/include/zxfs
-
-clean:
-	$(MAKE) -C /lib/modules/$(KRELEASE)/build M=$(XFS_SRC_DIR) clean
+clean clean_all: check_root clean_md clean_scsi clean_ixgbe clean_ixgbevf clean_i40e clean_zutils clean_btrfs clean_bonding clean_megaraid
+	-$(RM) -r $(OUTDIR)
 
 
+
+################################################################
+#
+#	IMAGE RULES
+#
+# TODO: use make O=$(OUTDIR)
+
+.PHONY:	pkg_image clean_image
+
+pkg_image: check_root
+	$(MAKE) $(MFLAGS) -j $(NPROC) deb-pkg LOCALVERSION=$(ZREVISION) KDEB_PKGVERSION=$(KRELEASE)
+
+pkg_path_image:
+	@echo `readlink -m ../linux-firmware-image-$(KRELEASE)_$(KRELEASE)_amd64.deb`
+	@echo `readlink -m ../linux-headers-$(KRELEASE)_$(KRELEASE)_amd64.deb`
+	@echo `readlink -m ../linux-image-$(KRELEASE)_$(KRELEASE)_amd64.deb`
+	@echo `readlink -m ../linux-image-$(KRELEASE)-dbg_$(KRELEASE)_amd64.deb`
+	@echo `readlink -m ../linux-libc-dev_$(KRELEASE)_amd64.deb`
+
+krelease:
+	@echo $(KRELEASE)
+
+menuconfig:
+	$(MAKE) $(MFLAGS) menuconfig LOCALVERSION=$(ZREVISION) KDEB_PKGVERSION=$(KRELEASE)
+
+clean_image: check_root
+	$(MAKE) $(MFLAGS) mrproper LOCALVERSION=$(ZREVISION) KDEB_PKGVERSION=$(KRELEASE)
+
+################################################################
+#
+#	HELP
+
+.PHONY: help
+
+help:
+	@echo
+	@echo "Build packaged for the kernel image or kernel modules."
+	@echo "By default configuration is taken from ./configs/config-zadara."
+	@echo "Configuration file can be explicitly specified, e.g. 'make -f Makefile.zadara CONFIG_FILE=./configs/config-zadara-debug'."
+	@echo "If you're changing configuration, do not forget to run 'make mrproper'."
+	@echo
+	@echo "Targets for the Kernel Image:"
+	@echo "  pkg_image   - Build the kernel as a deb package. Invokes 'make deb-pkg'."
+	@echo "  clean_image - Complete cleanup. Invokes 'make mrproper'."
+	@echo
+	@echo "Targets for the Kernel Module XXX:"
+	@echo "  pkg_XXX   - Build the package for kernel module XXX."
+	@echo "  make_XXX  - Compile kernel module XXX."
+	@echo "  clean_XXX - Cleanup kernel module XXX."
+	@echo

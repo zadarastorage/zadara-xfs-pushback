@@ -60,7 +60,7 @@ __zxfs_discard_range_register(
 				mp->m_fsname,
 				dr->discard_daddr, dr->discard_bbs, 
 				ex_dr->discard_daddr, ex_dr->discard_bbs)) {
-				error = XFS_ERROR(EFSCORRUPTED);
+				error = -EFSCORRUPTED;
 				break;
 			}
 			rbp = &((*rbp)->rb_left);
@@ -70,7 +70,7 @@ __zxfs_discard_range_register(
 				mp->m_fsname,
 				dr->discard_daddr, dr->discard_bbs, 
 				ex_dr->discard_daddr, ex_dr->discard_bbs)) {
-				error = XFS_ERROR(EFSCORRUPTED);
+				error = -EFSCORRUPTED;
 				break;
 			}
 			rbp = &((*rbp)->rb_right);
@@ -80,7 +80,7 @@ __zxfs_discard_range_register(
 				mp->m_fsname,
 				dr->discard_daddr, dr->discard_bbs, 
 				ex_dr->discard_daddr, ex_dr->discard_bbs);
-			error = XFS_ERROR(EFSCORRUPTED);
+				error = -EFSCORRUPTED;
 			break;
 		}
 	}
@@ -137,20 +137,20 @@ __zxfs_discard_range_to_ag(
 		"XFS(%s): AG[%u]: dr[%llu:%u] yields agno=%u (m_blkbb_log=%u sb_agblocks=%u)",
 		mp->m_fsname, pag->pag_agno, dr->discard_daddr, dr->discard_bbs,
 		*dagno, mp->m_blkbb_log, mp->m_sb.sb_agblocks))
-		return XFS_ERROR(EFSCORRUPTED);
+		return -EFSCORRUPTED;
 	
 	if (ZXFS_WARN(*dagbno + *dlen > mp->m_sb.sb_agblocks,
 		"XFS(%s): AG[%u]: dr[%llu:%u] yields [%u:%u] > sb_agblocks=%u",
 		mp->m_fsname, pag->pag_agno, dr->discard_daddr, dr->discard_bbs,
 		*dagbno, *dlen, mp->m_sb.sb_agblocks))
-		return XFS_ERROR(EFSCORRUPTED);
+		return -EFSCORRUPTED;
 
 	/* discard-range len should align nicely to blocks */
 	if (unlikely(dr->discard_bbs % *dlen)) {
 		ZXFS_WARN(1, "XFS(%s): AG[%u]: dr[%llu:%u] yields [%u:%u] but discard_bbs mod dlen!=0",
 			mp->m_fsname, pag->pag_agno, dr->discard_daddr, dr->discard_bbs,
 			*dagbno, *dlen);
-		return XFS_ERROR(EFSCORRUPTED);
+		return -EFSCORRUPTED;
 	}
 
 	return 0;

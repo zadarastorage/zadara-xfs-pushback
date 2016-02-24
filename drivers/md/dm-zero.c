@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2003 Christophe Saout <christophe@saout.de>
+ * Copyright (C) 2003 Jana Saout <jana@saout.de>
  *
  * This file is released under the GPL.
  */
@@ -25,7 +25,7 @@ static int zero_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	/*
 	 * Silently drop discards, avoiding -EOPNOTSUPP.
 	 */
-	ti->num_discard_requests = 1;
+	ti->num_discard_bios = 1;
 
 	return 0;
 }
@@ -79,6 +79,6 @@ static void __exit dm_zero_exit(void)
 module_init(dm_zero_init)
 module_exit(dm_zero_exit)
 
-MODULE_AUTHOR("Christophe Saout <christophe@saout.de>");
+MODULE_AUTHOR("Jana Saout <jana@saout.de>");
 MODULE_DESCRIPTION(DM_NAME " dummy target returning zeros");
 MODULE_LICENSE("GPL");

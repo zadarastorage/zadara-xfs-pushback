@@ -17,13 +17,13 @@
 #include <linux/fs.h>
 #include <linux/kref.h>
 #include <linux/utsname.h>
-#include <linux/nfsd/nfsfh.h>
 #include <linux/lockd/bind.h>
 #include <linux/lockd/xdr.h>
 #ifdef CONFIG_LOCKD_V4
 #include <linux/lockd/xdr4.h>
 #endif
 #include <linux/lockd/debug.h>
+#include <linux/sunrpc/svc.h>
 
 /*
  * Version string
@@ -178,7 +178,6 @@ struct nlm_block {
 	unsigned char		b_granted;	/* VFS granted lock */
 	struct nlm_file *	b_file;		/* file in question */
 	struct cache_req *	b_cache_req;	/* deferred request handling */
-	struct file_lock *	b_fl;		/* set for GETLK */
 	struct cache_deferred_req * b_deferred_req;
 	unsigned int		b_flags;	/* block flags */
 #define B_QUEUED		1	/* lock queued */
@@ -212,7 +211,8 @@ int		  nlmclnt_block(struct nlm_wait *block, struct nlm_rqst *req, long timeout)
 __be32		  nlmclnt_grant(const struct sockaddr *addr,
 				const struct nlm_lock *lock);
 void		  nlmclnt_recovery(struct nlm_host *);
-int		  nlmclnt_reclaim(struct nlm_host *, struct file_lock *);
+int		  nlmclnt_reclaim(struct nlm_host *, struct file_lock *,
+				  struct nlm_rqst *);
 void		  nlmclnt_next_cookie(struct nlm_cookie *);
 
 /*
@@ -291,7 +291,7 @@ int           nlmsvc_unlock_all_by_ip(struct sockaddr *server_addr);
 
 static inline struct inode *nlmsvc_file_inode(struct nlm_file *file)
 {
-	return file->f_file->f_path.dentry->d_inode;
+	return file_inode(file->f_file);
 }
 
 static inline int __nlm_privileged_request4(const struct sockaddr *sap)

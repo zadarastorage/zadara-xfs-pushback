@@ -20,11 +20,13 @@
  *
  */
 
+#include <linux/err.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
-#include <linux/tegra-ahb.h>
+
+#include <soc/tegra/ahb.h>
 
 #define DRV_NAME "tegra-ahb"
 
@@ -129,7 +131,7 @@ static inline void gizmo_writel(struct tegra_ahb *ahb, u32 value, u32 offset)
 	writel(value, ahb->regs + offset);
 }
 
-#ifdef CONFIG_ARCH_TEGRA_3x_SOC
+#ifdef CONFIG_TEGRA_IOMMU_SMMU
 static int tegra_ahb_match_by_smmu(struct device *dev, void *data)
 {
 	struct tegra_ahb *ahb = dev_get_drvdata(dev);
@@ -157,7 +159,7 @@ int tegra_ahb_enable_smmu(struct device_node *dn)
 EXPORT_SYMBOL(tegra_ahb_enable_smmu);
 #endif
 
-#ifdef CONFIG_PM_SLEEP
+#ifdef CONFIG_PM
 static int tegra_ahb_suspend(struct device *dev)
 {
 	int i;
@@ -255,11 +257,9 @@ static int tegra_ahb_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res)
-		return -ENODEV;
-	ahb->regs = devm_request_and_ioremap(&pdev->dev, res);
-	if (!ahb->regs)
-		return -EBUSY;
+	ahb->regs = devm_ioremap_resource(&pdev->dev, res);
+	if (IS_ERR(ahb->regs))
+		return PTR_ERR(ahb->regs);
 
 	ahb->dev = &pdev->dev;
 	platform_set_drvdata(pdev, ahb);

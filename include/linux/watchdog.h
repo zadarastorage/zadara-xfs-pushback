@@ -97,13 +97,8 @@ struct watchdog_device {
 #define WDOG_UNREGISTERED	4	/* Has the device been unregistered */
 };
 
-#ifdef CONFIG_WATCHDOG_NOWAYOUT
-#define WATCHDOG_NOWAYOUT		1
-#define WATCHDOG_NOWAYOUT_INIT_STATUS	(1 << WDOG_NO_WAY_OUT)
-#else
-#define WATCHDOG_NOWAYOUT		0
-#define WATCHDOG_NOWAYOUT_INIT_STATUS	0
-#endif
+#define WATCHDOG_NOWAYOUT		IS_BUILTIN(CONFIG_WATCHDOG_NOWAYOUT)
+#define WATCHDOG_NOWAYOUT_INIT_STATUS	(WATCHDOG_NOWAYOUT << WDOG_NO_WAY_OUT)
 
 /* Use the following function to check whether or not the watchdog is active */
 static inline bool watchdog_active(struct watchdog_device *wdd)
@@ -118,6 +113,13 @@ static inline void watchdog_set_nowayout(struct watchdog_device *wdd, bool noway
 		set_bit(WDOG_NO_WAY_OUT, &wdd->status);
 }
 
+/* Use the following function to check if a timeout value is invalid */
+static inline bool watchdog_timeout_invalid(struct watchdog_device *wdd, unsigned int t)
+{
+	return ((wdd->max_timeout != 0) &&
+		(t < wdd->min_timeout || t > wdd->max_timeout));
+}
+
 /* Use the following functions to manipulate watchdog driver specific data */
 static inline void watchdog_set_drvdata(struct watchdog_device *wdd, void *data)
 {
@@ -130,6 +132,8 @@ static inline void *watchdog_get_drvdata(struct watchdog_device *wdd)
 }
 
 /* drivers/watchdog/watchdog_core.c */
+extern int watchdog_init_timeout(struct watchdog_device *wdd,
+				  unsigned int timeout_parm, struct device *dev);
 extern int watchdog_register_device(struct watchdog_device *);
 extern void watchdog_unregister_device(struct watchdog_device *);
 

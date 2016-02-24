@@ -13,16 +13,6 @@
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA
  */
 
 /* Linux specific include files */
@@ -51,7 +41,7 @@ static void h3a_af_setup_regs(struct ispstat *af, void *priv)
 	if (af->state == ISPSTAT_DISABLED)
 		return;
 
-	isp_reg_writel(af->isp, af->active_buf->iommu_addr, OMAP3_ISP_IOMEM_H3A,
+	isp_reg_writel(af->isp, af->active_buf->dma_addr, OMAP3_ISP_IOMEM_H3A,
 		       ISPH3A_AFBUFST);
 
 	if (!af->update)
@@ -363,13 +353,11 @@ int omap3isp_h3a_af_init(struct isp_device *isp)
 	struct ispstat *af = &isp->isp_af;
 	struct omap3isp_h3a_af_config *af_cfg;
 	struct omap3isp_h3a_af_config *af_recover_cfg;
-	int ret;
 
-	af_cfg = kzalloc(sizeof(*af_cfg), GFP_KERNEL);
+	af_cfg = devm_kzalloc(isp->dev, sizeof(*af_cfg), GFP_KERNEL);
 	if (af_cfg == NULL)
 		return -ENOMEM;
 
-	memset(af, 0, sizeof(*af));
 	af->ops = &h3a_af_ops;
 	af->priv = af_cfg;
 	af->dma_ch = -1;
@@ -377,12 +365,12 @@ int omap3isp_h3a_af_init(struct isp_device *isp)
 	af->isp = isp;
 
 	/* Set recover state configuration */
-	af_recover_cfg = kzalloc(sizeof(*af_recover_cfg), GFP_KERNEL);
+	af_recover_cfg = devm_kzalloc(isp->dev, sizeof(*af_recover_cfg),
+				      GFP_KERNEL);
 	if (!af_recover_cfg) {
 		dev_err(af->isp->dev, "AF: cannot allocate memory for recover "
 				      "configuration.\n");
-		ret = -ENOMEM;
-		goto err_recover_alloc;
+		return -ENOMEM;
 	}
 
 	af_recover_cfg->paxel.h_start = OMAP3ISP_AF_PAXEL_HZSTART_MIN;
@@ -394,30 +382,16 @@ int omap3isp_h3a_af_init(struct isp_device *isp)
 	if (h3a_af_validate_params(af, af_recover_cfg)) {
 		dev_err(af->isp->dev, "AF: recover configuration is "
 				      "invalid.\n");
-		ret = -EINVAL;
-		goto err_conf;
+		return -EINVAL;
 	}
 
 	af_recover_cfg->buf_size = h3a_af_get_buf_size(af_recover_cfg);
 	af->recover_priv = af_recover_cfg;
 
-	ret = omap3isp_stat_init(af, "AF", &h3a_af_subdev_ops);
-	if (ret)
-		goto err_conf;
-
-	return 0;
-
-err_conf:
-	kfree(af_recover_cfg);
-err_recover_alloc:
-	kfree(af_cfg);
-
-	return ret;
+	return omap3isp_stat_init(af, "AF", &h3a_af_subdev_ops);
 }
 
 void omap3isp_h3a_af_cleanup(struct isp_device *isp)
 {
-	kfree(isp->isp_af.priv);
-	kfree(isp->isp_af.recover_priv);
 	omap3isp_stat_cleanup(&isp->isp_af);
 }

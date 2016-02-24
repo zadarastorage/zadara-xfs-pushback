@@ -24,6 +24,8 @@
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
 
+#include "systbls.h"
+
 /* #define DEBUG_UNIMP_SYSCALL */
 
 /* XXX Make this per-binary type, this way we can detect the type of
@@ -68,7 +70,7 @@ unsigned long arch_get_unmapped_area(struct file *filp, unsigned long addr, unsi
  * sys_pipe() is the normal C calling standard for creating
  * a pipe. It's not the way unix traditionally does this, though.
  */
-asmlinkage int sparc_pipe(struct pt_regs *regs)
+asmlinkage long sparc_pipe(struct pt_regs *regs)
 {
 	int fd[2];
 	int error;
@@ -93,7 +95,7 @@ int sparc_mmap_check(unsigned long addr, unsigned long len)
 
 /* Linux version of mmap */
 
-asmlinkage unsigned long sys_mmap2(unsigned long addr, unsigned long len,
+asmlinkage long sys_mmap2(unsigned long addr, unsigned long len,
 	unsigned long prot, unsigned long flags, unsigned long fd,
 	unsigned long pgoff)
 {
@@ -103,7 +105,7 @@ asmlinkage unsigned long sys_mmap2(unsigned long addr, unsigned long len,
 			      pgoff >> (PAGE_SHIFT - 12));
 }
 
-asmlinkage unsigned long sys_mmap(unsigned long addr, unsigned long len,
+asmlinkage long sys_mmap(unsigned long addr, unsigned long len,
 	unsigned long prot, unsigned long flags, unsigned long fd,
 	unsigned long off)
 {
@@ -160,49 +162,19 @@ sparc_breakpoint (struct pt_regs *regs)
 #endif
 }
 
-asmlinkage int
-sparc_sigaction (int sig, const struct old_sigaction __user *act,
-		 struct old_sigaction __user *oact)
+SYSCALL_DEFINE3(sparc_sigaction, int, sig,
+		struct old_sigaction __user *,act,
+		struct old_sigaction __user *,oact)
 {
-	struct k_sigaction new_ka, old_ka;
-	int ret;
-
 	WARN_ON_ONCE(sig >= 0);
-	sig = -sig;
-
-	if (act) {
-		unsigned long mask;
-
-		if (!access_ok(VERIFY_READ, act, sizeof(*act)) ||
-		    __get_user(new_ka.sa.sa_handler, &act->sa_handler) ||
-		    __get_user(new_ka.sa.sa_restorer, &act->sa_restorer) ||
-		    __get_user(new_ka.sa.sa_flags, &act->sa_flags) ||
-		    __get_user(mask, &act->sa_mask))
-			return -EFAULT;
-		siginitset(&new_ka.sa.sa_mask, mask);
-		new_ka.ka_restorer = NULL;
-	}
-
-	ret = do_sigaction(sig, act ? &new_ka : NULL, oact ? &old_ka : NULL);
-
-	if (!ret && oact) {
-		if (!access_ok(VERIFY_WRITE, oact, sizeof(*oact)) ||
-		    __put_user(old_ka.sa.sa_handler, &oact->sa_handler) ||
-		    __put_user(old_ka.sa.sa_restorer, &oact->sa_restorer) ||
-		    __put_user(old_ka.sa.sa_flags, &oact->sa_flags) ||
-		    __put_user(old_ka.sa.sa_mask.sig[0], &oact->sa_mask))
-			return -EFAULT;
-	}
-
-	return ret;
+	return sys_sigaction(-sig, act, oact);
 }
 
-asmlinkage long
-sys_rt_sigaction(int sig,
-		 const struct sigaction __user *act,
-		 struct sigaction __user *oact,
-		 void __user *restorer,
-		 size_t sigsetsize)
+SYSCALL_DEFINE5(rt_sigaction, int, sig,
+		 const struct sigaction __user *, act,
+		 struct sigaction __user *, oact,
+		 void __user *, restorer,
+		 size_t, sigsetsize)
 {
 	struct k_sigaction new_ka, old_ka;
 	int ret;
@@ -227,7 +199,7 @@ sys_rt_sigaction(int sig,
 	return ret;
 }
 
-asmlinkage int sys_getdomainname(char __user *name, int len)
+asmlinkage long sys_getdomainname(char __user *name, int len)
 {
  	int nlen, err;
  	

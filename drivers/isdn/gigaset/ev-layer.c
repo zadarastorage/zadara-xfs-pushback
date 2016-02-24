@@ -351,10 +351,11 @@ struct reply_t gigaset_tab_cid[] =
 
 
 static const struct resp_type_t {
-	unsigned char	*response;
-	int		resp_code;
-	int		type;
-} resp_type[] =
+	char	*response;
+	int	resp_code;
+	int	type;
+}
+resp_type[] =
 {
 	{"OK",		RSP_OK,		RT_NOTHING},
 	{"ERROR",	RSP_ERROR,	RT_NOTHING},
@@ -374,11 +375,12 @@ static const struct resp_type_t {
 };
 
 static const struct zsau_resp_t {
-	unsigned char	*str;
-	int		code;
-} zsau_resp[] =
+	char	*str;
+	int	code;
+}
+zsau_resp[] =
 {
-	{"OUTGOING_CALL_PROCEEDING",	ZSAU_OUTGOING_CALL_PROCEEDING},
+	{"OUTGOING_CALL_PROCEEDING",	ZSAU_PROCEEDING},
 	{"CALL_DELIVERED",		ZSAU_CALL_DELIVERED},
 	{"ACTIVE",			ZSAU_ACTIVE},
 	{"DISCONNECT_IND",		ZSAU_DISCONNECT_IND},
@@ -434,7 +436,7 @@ void gigaset_handle_modem_response(struct cardstate *cs)
 	len = cs->cbytes;
 	if (!len) {
 		/* ignore additional LFs/CRs (M10x config mode or cx100) */
-		gig_dbg(DEBUG_MCMD, "skipped EOL [%02X]", cs->respdata[len]);
+		gig_dbg(DEBUG_MCMD, "skipped EOL [%02X]", cs->respdata[0]);
 		return;
 	}
 	cs->respdata[len] = 0;
@@ -602,14 +604,14 @@ void gigaset_handle_modem_response(struct cardstate *cs)
 }
 EXPORT_SYMBOL_GPL(gigaset_handle_modem_response);
 
-/* disconnect
+/* disconnect_nobc
  * process closing of connection associated with given AT state structure
+ * without B channel
  */
-static void disconnect(struct at_state_t **at_state_p)
+static void disconnect_nobc(struct at_state_t **at_state_p,
+			    struct cardstate *cs)
 {
 	unsigned long flags;
-	struct bc_state *bcs = (*at_state_p)->bcs;
-	struct cardstate *cs = (*at_state_p)->cs;
 
 	spin_lock_irqsave(&cs->lock, flags);
 	++(*at_state_p)->seq_index;
@@ -620,23 +622,44 @@ static void disconnect(struct at_state_t **at_state_p)
 		gig_dbg(DEBUG_EVENT, "Scheduling PC_UMMODE");
 		cs->commands_pending = 1;
 	}
-	spin_unlock_irqrestore(&cs->lock, flags);
 
-	if (bcs) {
-		/* B channel assigned: invoke hardware specific handler */
-		cs->ops->close_bchannel(bcs);
-		/* notify LL */
-		if (bcs->chstate & (CHS_D_UP | CHS_NOTIFY_LL)) {
-			bcs->chstate &= ~(CHS_D_UP | CHS_NOTIFY_LL);
-			gigaset_isdn_hupD(bcs);
-		}
-	} else {
-		/* no B channel assigned: just deallocate */
-		spin_lock_irqsave(&cs->lock, flags);
+	/* check for and deallocate temporary AT state */
+	if (!list_empty(&(*at_state_p)->list)) {
 		list_del(&(*at_state_p)->list);
 		kfree(*at_state_p);
 		*at_state_p = NULL;
-		spin_unlock_irqrestore(&cs->lock, flags);
+	}
+
+	spin_unlock_irqrestore(&cs->lock, flags);
+}
+
+/* disconnect_bc
+ * process closing of connection associated with given AT state structure
+ * and B channel
+ */
+static void disconnect_bc(struct at_state_t *at_state,
+			  struct cardstate *cs, struct bc_state *bcs)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&cs->lock, flags);
+	++at_state->seq_index;
+
+	/* revert to selected idle mode */
+	if (!cs->cidmode) {
+		cs->at_state.pending_commands |= PC_UMMODE;
+		gig_dbg(DEBUG_EVENT, "Scheduling PC_UMMODE");
+		cs->commands_pending = 1;
+	}
+	spin_unlock_irqrestore(&cs->lock, flags);
+
+	/* invoke hardware specific handler */
+	cs->ops->close_bchannel(bcs);
+
+	/* notify LL */
+	if (bcs->chstate & (CHS_D_UP | CHS_NOTIFY_LL)) {
+		bcs->chstate &= ~(CHS_D_UP | CHS_NOTIFY_LL);
+		gigaset_isdn_hupD(bcs);
 	}
 }
 
@@ -644,7 +667,7 @@ static void disconnect(struct at_state_t **at_state_p)
  * get a free AT state structure: either one of those associated with the
  * B channels of the Gigaset device, or if none of those is available,
  * a newly allocated one with bcs=NULL
- * The structure should be freed by calling disconnect() after use.
+ * The structure should be freed by calling disconnect_nobc() after use.
  */
 static inline struct at_state_t *get_free_channel(struct cardstate *cs,
 						  int cid)
@@ -707,27 +730,29 @@ static void schedule_init(struct cardstate *cs, int state)
 	cs->commands_pending = 1;
 }
 
-/* Add "AT" to a command, add the cid, dle encode it, send the result to the
-   hardware. */
-static void send_command(struct cardstate *cs, const char *cmd, int cid,
-			 int dle, gfp_t kmallocflags)
+/* send an AT command
+ * adding the "AT" prefix, cid and DLE encapsulation as appropriate
+ */
+static void send_command(struct cardstate *cs, const char *cmd,
+			 struct at_state_t *at_state)
 {
+	int cid = at_state->cid;
 	struct cmdbuf_t *cb;
 	size_t buflen;
 
 	buflen = strlen(cmd) + 12; /* DLE ( A T 1 2 3 4 5 <cmd> DLE ) \0 */
-	cb = kmalloc(sizeof(struct cmdbuf_t) + buflen, kmallocflags);
+	cb = kmalloc(sizeof(struct cmdbuf_t) + buflen, GFP_ATOMIC);
 	if (!cb) {
 		dev_err(cs->dev, "%s: out of memory\n", __func__);
 		return;
 	}
 	if (cid > 0 && cid <= 65535)
 		cb->len = snprintf(cb->buf, buflen,
-				   dle ? "\020(AT%d%s\020)" : "AT%d%s",
+				   cs->dle ? "\020(AT%d%s\020)" : "AT%d%s",
 				   cid, cmd);
 	else
 		cb->len = snprintf(cb->buf, buflen,
-				   dle ? "\020(AT%s\020)" : "AT%s",
+				   cs->dle ? "\020(AT%s\020)" : "AT%s",
 				   cmd);
 	cb->offset = 0;
 	cb->next = NULL;
@@ -886,7 +911,7 @@ static void finish_shutdown(struct cardstate *cs)
 		gigaset_isdn_stop(cs);
 	}
 
-	/* The rest is done by cleanup_cs () in user mode. */
+	/* The rest is done by cleanup_cs() in process context. */
 
 	cs->cmd_result = -ENODEV;
 	cs->waiting = 0;
@@ -976,10 +1001,9 @@ exit:
 }
 
 static void handle_icall(struct cardstate *cs, struct bc_state *bcs,
-			 struct at_state_t **p_at_state)
+			 struct at_state_t *at_state)
 {
 	int retval;
-	struct at_state_t *at_state = *p_at_state;
 
 	retval = gigaset_isdn_icall(at_state);
 	switch (retval) {
@@ -1054,7 +1078,7 @@ static void do_action(int action, struct cardstate *cs,
 		      struct event_t *ev)
 {
 	struct at_state_t *at_state = *p_at_state;
-	struct at_state_t *at_state2;
+	struct bc_state *bcs2;
 	unsigned long flags;
 
 	int channel;
@@ -1153,8 +1177,8 @@ static void do_action(int action, struct cardstate *cs,
 		break;
 	case ACT_RING:
 		/* get fresh AT state structure for new CID */
-		at_state2 = get_free_channel(cs, ev->parameter);
-		if (!at_state2) {
+		at_state = get_free_channel(cs, ev->parameter);
+		if (!at_state) {
 			dev_warn(cs->dev,
 				 "RING ignored: could not allocate channel structure\n");
 			break;
@@ -1163,20 +1187,20 @@ static void do_action(int action, struct cardstate *cs,
 		/* initialize AT state structure
 		 * note that bcs may be NULL if no B channel is free
 		 */
-		at_state2->ConState = 700;
+		at_state->ConState = 700;
 		for (i = 0; i < STR_NUM; ++i) {
-			kfree(at_state2->str_var[i]);
-			at_state2->str_var[i] = NULL;
+			kfree(at_state->str_var[i]);
+			at_state->str_var[i] = NULL;
 		}
-		at_state2->int_var[VAR_ZCTP] = -1;
+		at_state->int_var[VAR_ZCTP] = -1;
 
 		spin_lock_irqsave(&cs->lock, flags);
-		at_state2->timer_expires = RING_TIMEOUT;
-		at_state2->timer_active = 1;
+		at_state->timer_expires = RING_TIMEOUT;
+		at_state->timer_active = 1;
 		spin_unlock_irqrestore(&cs->lock, flags);
 		break;
 	case ACT_ICALL:
-		handle_icall(cs, bcs, p_at_state);
+		handle_icall(cs, bcs, at_state);
 		break;
 	case ACT_FAILSDOWN:
 		dev_warn(cs->dev, "Could not shut down the device.\n");
@@ -1210,14 +1234,17 @@ static void do_action(int action, struct cardstate *cs,
 	case ACT_DISCONNECT:
 		cs->cur_at_seq = SEQ_NONE;
 		at_state->cid = -1;
-		if (bcs && cs->onechannel && cs->dle) {
+		if (!bcs) {
+			disconnect_nobc(p_at_state, cs);
+		} else if (cs->onechannel && cs->dle) {
 			/* Check for other open channels not needed:
 			 * DLE only used for M10x with one B channel.
 			 */
 			at_state->pending_commands |= PC_DLE0;
 			cs->commands_pending = 1;
-		} else
-			disconnect(p_at_state);
+		} else {
+			disconnect_bc(at_state, cs, bcs);
+		}
 		break;
 	case ACT_FAKEDLE0:
 		at_state->int_var[VAR_ZDLE] = 0;
@@ -1225,24 +1252,27 @@ static void do_action(int action, struct cardstate *cs,
 		/* fall through */
 	case ACT_DLE0:
 		cs->cur_at_seq = SEQ_NONE;
-		at_state2 = &cs->bcs[cs->curchannel].at_state;
-		disconnect(&at_state2);
+		bcs2 = cs->bcs + cs->curchannel;
+		disconnect_bc(&bcs2->at_state, cs, bcs2);
 		break;
 	case ACT_ABORTHUP:
 		cs->cur_at_seq = SEQ_NONE;
 		dev_warn(cs->dev, "Could not hang up.\n");
 		at_state->cid = -1;
-		if (bcs && cs->onechannel)
+		if (!bcs)
+			disconnect_nobc(p_at_state, cs);
+		else if (cs->onechannel)
 			at_state->pending_commands |= PC_DLE0;
 		else
-			disconnect(p_at_state);
+			disconnect_bc(at_state, cs, bcs);
 		schedule_init(cs, MS_RECOVER);
 		break;
 	case ACT_FAILDLE0:
 		cs->cur_at_seq = SEQ_NONE;
-		dev_warn(cs->dev, "Could not leave DLE mode.\n");
-		at_state2 = &cs->bcs[cs->curchannel].at_state;
-		disconnect(&at_state2);
+		dev_warn(cs->dev, "Error leaving DLE mode.\n");
+		cs->dle = 0;
+		bcs2 = cs->bcs + cs->curchannel;
+		disconnect_bc(&bcs2->at_state, cs, bcs2);
 		schedule_init(cs, MS_RECOVER);
 		break;
 	case ACT_FAILDLE1:
@@ -1264,21 +1294,21 @@ static void do_action(int action, struct cardstate *cs,
 			cs->commands_pending = 1;
 			break;
 		}
-		/* fall through */
+		/* bad cid: fall through */
 	case ACT_FAILCID:
 		cs->cur_at_seq = SEQ_NONE;
 		channel = cs->curchannel;
 		if (reinit_and_retry(cs, channel) < 0) {
 			dev_warn(cs->dev,
 				 "Could not get a call ID. Cannot dial.\n");
-			at_state2 = &cs->bcs[channel].at_state;
-			disconnect(&at_state2);
+			bcs2 = cs->bcs + channel;
+			disconnect_bc(&bcs2->at_state, cs, bcs2);
 		}
 		break;
 	case ACT_ABORTCID:
 		cs->cur_at_seq = SEQ_NONE;
-		at_state2 = &cs->bcs[cs->curchannel].at_state;
-		disconnect(&at_state2);
+		bcs2 = cs->bcs + cs->curchannel;
+		disconnect_bc(&bcs2->at_state, cs, bcs2);
 		break;
 
 	case ACT_DIALING:
@@ -1287,7 +1317,10 @@ static void do_action(int action, struct cardstate *cs,
 		break;
 
 	case ACT_ABORTACCEPT:	/* hangup/error/timeout during ICALL procssng */
-		disconnect(p_at_state);
+		if (bcs)
+			disconnect_bc(at_state, cs, bcs);
+		else
+			disconnect_nobc(p_at_state, cs);
 		break;
 
 	case ACT_ABORTDIAL:	/* error/timeout during dial preparation */
@@ -1339,7 +1372,6 @@ static void do_action(int action, struct cardstate *cs,
 			*p_resp_code = RSP_ERROR;
 			break;
 		}
-		/*at_state->getstring = 1;*/
 		cs->gotfwver = 0;
 		break;
 	case ACT_GOTVER:
@@ -1377,6 +1409,11 @@ static void do_action(int action, struct cardstate *cs,
 	/* events from the LL */
 
 	case ACT_DIAL:
+		if (!ev->ptr) {
+			*p_genresp = 1;
+			*p_resp_code = RSP_ERROR;
+			break;
+		}
 		start_dial(at_state, ev->ptr, ev->parameter);
 		break;
 	case ACT_ACCEPT:
@@ -1471,7 +1508,6 @@ static void process_event(struct cardstate *cs, struct event_t *ev)
 	int rcode;
 	int genresp = 0;
 	int resp_code = RSP_ERROR;
-	int sendcid;
 	struct at_state_t *at_state;
 	int index;
 	int curact;
@@ -1499,7 +1535,6 @@ static void process_event(struct cardstate *cs, struct event_t *ev)
 		at_state->ConState, ev->type);
 
 	bcs = at_state->bcs;
-	sendcid = at_state->cid;
 
 	/* Setting the pointer to the dial array */
 	rep = at_state->replystruct;
@@ -1510,10 +1545,12 @@ static void process_event(struct cardstate *cs, struct event_t *ev)
 		    || !at_state->timer_active) {
 			ev->type = RSP_NONE; /* old timeout */
 			gig_dbg(DEBUG_EVENT, "old timeout");
-		} else if (!at_state->waiting)
-			gig_dbg(DEBUG_EVENT, "timeout occurred");
-		else
-			gig_dbg(DEBUG_EVENT, "stopped waiting");
+		} else {
+			if (at_state->waiting)
+				gig_dbg(DEBUG_EVENT, "stopped waiting");
+			else
+				gig_dbg(DEBUG_EVENT, "timeout occurred");
+		}
 	}
 	spin_unlock_irqrestore(&cs->lock, flags);
 
@@ -1561,45 +1598,40 @@ static void process_event(struct cardstate *cs, struct event_t *ev)
 		do_action(rep->action[curact], cs, bcs, &at_state, &p_command,
 			  &genresp, &resp_code, ev);
 		if (!at_state)
-			break; /* may be freed after disconnect */
+			/* at_state destroyed by disconnect */
+			return;
 	}
 
-	if (at_state) {
-		/* Jump to the next con-state regarding the array */
-		if (rep->new_ConState >= 0)
-			at_state->ConState = rep->new_ConState;
+	/* Jump to the next con-state regarding the array */
+	if (rep->new_ConState >= 0)
+		at_state->ConState = rep->new_ConState;
 
-		if (genresp) {
-			spin_lock_irqsave(&cs->lock, flags);
+	if (genresp) {
+		spin_lock_irqsave(&cs->lock, flags);
+		at_state->timer_expires = 0;
+		at_state->timer_active = 0;
+		spin_unlock_irqrestore(&cs->lock, flags);
+		gigaset_add_event(cs, at_state, resp_code, NULL, 0, NULL);
+	} else {
+		/* Send command to modem if not NULL... */
+		if (p_command) {
+			if (cs->connected)
+				send_command(cs, p_command, at_state);
+			else
+				gigaset_add_event(cs, at_state, RSP_NODEV,
+						  NULL, 0, NULL);
+		}
+
+		spin_lock_irqsave(&cs->lock, flags);
+		if (!rep->timeout) {
 			at_state->timer_expires = 0;
 			at_state->timer_active = 0;
-			spin_unlock_irqrestore(&cs->lock, flags);
-			gigaset_add_event(cs, at_state, resp_code,
-					  NULL, 0, NULL);
-		} else {
-			/* Send command to modem if not NULL... */
-			if (p_command) {
-				if (cs->connected)
-					send_command(cs, p_command,
-						     sendcid, cs->dle,
-						     GFP_ATOMIC);
-				else
-					gigaset_add_event(cs, at_state,
-							  RSP_NODEV,
-							  NULL, 0, NULL);
-			}
-
-			spin_lock_irqsave(&cs->lock, flags);
-			if (!rep->timeout) {
-				at_state->timer_expires = 0;
-				at_state->timer_active = 0;
-			} else if (rep->timeout > 0) { /* new timeout */
-				at_state->timer_expires = rep->timeout * 10;
-				at_state->timer_active = 1;
-				++at_state->timer_index;
-			}
-			spin_unlock_irqrestore(&cs->lock, flags);
+		} else if (rep->timeout > 0) { /* new timeout */
+			at_state->timer_expires = rep->timeout * 10;
+			at_state->timer_active = 1;
+			++at_state->timer_index;
 		}
+		spin_unlock_irqrestore(&cs->lock, flags);
 	}
 }
 
@@ -1693,6 +1725,11 @@ static void process_command_flags(struct cardstate *cs)
 	for (i = 0; i < cs->channels; ++i) {
 		bcs = cs->bcs + i;
 		if (bcs->at_state.pending_commands & PC_HUP) {
+			if (cs->dle) {
+				cs->curchannel = bcs->channel;
+				schedule_sequence(cs, &cs->at_state, SEQ_DLE0);
+				return;
+			}
 			bcs->at_state.pending_commands &= ~PC_HUP;
 			if (bcs->at_state.pending_commands & PC_CID) {
 				/* not yet dialing: PC_NOCID is sufficient */

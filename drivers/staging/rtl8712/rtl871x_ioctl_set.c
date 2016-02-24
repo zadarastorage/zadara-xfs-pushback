@@ -62,8 +62,8 @@ static u8 do_join(struct _adapter *padapter)
 	struct	mlme_priv	*pmlmepriv = &(padapter->mlmepriv);
 	struct  __queue	*queue	= &(pmlmepriv->scanned_queue);
 
-	phead = get_list_head(queue);
-	plist = get_next(phead);
+	phead = &queue->queue;
+	plist = phead->next;
 	pmlmepriv->cur_network.join_res = -2;
 	pmlmepriv->fw_state |= _FW_UNDER_LINKING;
 	pmlmepriv->pscanned = plist;
@@ -71,7 +71,7 @@ static u8 do_join(struct _adapter *padapter)
 
 	/* adhoc mode will start with an empty queue, but skip checking */
 	if (!check_fwstate(pmlmepriv, WIFI_ADHOC_STATE) &&
-	    _queue_empty(queue)) {
+	    list_empty(&queue->queue)) {
 		if (pmlmepriv->fw_state & _FW_UNDER_LINKING)
 			pmlmepriv->fw_state ^= _FW_UNDER_LINKING;
 		/* when set_ssid/set_bssid for do_join(), but scanning queue
@@ -97,8 +97,6 @@ static u8 do_join(struct _adapter *padapter)
 				pmlmepriv->fw_state = WIFI_ADHOC_MASTER_STATE;
 				pibss = padapter->registrypriv.dev_network.
 					MacAddress;
-				memset(&pdev_network->Ssid, 0,
-					sizeof(struct ndis_802_11_ssid));
 				memcpy(&pdev_network->Ssid,
 					&pmlmepriv->assoc_ssid,
 					sizeof(struct ndis_802_11_ssid));

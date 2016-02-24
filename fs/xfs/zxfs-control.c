@@ -253,6 +253,63 @@ STATIC int zxfs_control_open(struct inode *inode, struct file *filp)
 	return 0;
 }
 
+STATIC long xfs_control_ioctl_monitor_fs(xfs_mount_t *mp, void __user *uarg)
+{
+	int error = 0;
+	struct zxfs_mount *zmp = &mp->m_zxfs;
+	struct xfs_ioctl_monitor_fs_args arg;
+
+	if (copy_from_user(&arg, uarg, sizeof(arg))) {
+		error = -XFS_ERROR(EFAULT);
+		goto out;
+	}
+
+	/* Clear the awake condition first of all */
+	if (arg.is_periodic)
+		zxfs_control_poll_reset(zmp);
+
+	/* set args.fs_state flags */
+	arg.fs_state = 0;
+
+	/* --- XFS_ZIOC_FS_STATE_SHUTDOWN--- */
+	{
+		u64 shutdown_flags = atomic64_read(&zmp->shutdown_flags);
+		if (shutdown_flags) {
+			arg.fs_state |= XFS_ZIOC_FS_STATE_SHUTDOWN;
+			ZXFSLOG(mp, Z_KWARN, "POLL - SHUTDOWN");
+		}
+	}
+	/* --- XFS_ZIOC_FS_CORRUPTED --- */
+	if (atomic_read(&zmp->corruption_detected) != 0) {
+		arg.fs_state |= XFS_ZIOC_FS_CORRUPTED;
+		ZXFSLOG(mp, Z_KDEB1, "POLL - CORRUPTION");
+	}
+
+	if (copy_to_user(uarg, &arg, sizeof(arg)))
+		error = -XFS_ERROR(EFAULT);
+
+out:
+	return error;
+}
+
+STATIC long zxfs_control_ioctl(struct file *filp, unsigned int cmd, unsigned long p)
+{
+	int error = 0;
+	xfs_mount_t *mp = (xfs_mount_t*)filp->private_data;
+	void __user *arg = (void __user *)p;
+
+	switch (cmd) {
+		case XFS_ZIOC_MONITOR_FS:
+			error = xfs_control_ioctl_monitor_fs(mp, arg);
+			break;
+		default:
+			error = -XFS_ERROR(ENOTTY);
+			break;
+	}
+
+	return error;
+}
+
 int zxfs_globals_control_init(void)
 {
 	int error = 0;
@@ -296,6 +353,7 @@ int zxfs_globals_control_init(void)
 	zklog(Z_KINFO, "major for control devices: %u", MAJOR(zxfs_globals.ctl_base_devno));
 
 	zxfs_globals.ctl_dev_fops.open           = zxfs_control_open;
+	zxfs_globals.ctl_dev_fops.unlocked_ioctl = zxfs_control_ioctl;
 	zxfs_globals.ctl_dev_fops.release        = zxfs_control_release;
 	zxfs_globals.ctl_dev_fops.poll           = zxfs_control_poll;
 

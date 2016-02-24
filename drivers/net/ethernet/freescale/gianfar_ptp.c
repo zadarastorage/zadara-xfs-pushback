@@ -17,9 +17,11 @@
  *  along with this program; if not, write to the Free Software
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
+
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/device.h>
 #include <linux/hrtimer.h>
-#include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -131,7 +133,7 @@ struct gianfar_ptp_registers {
 #define REG_SIZE	sizeof(struct gianfar_ptp_registers)
 
 struct etsects {
-	struct gianfar_ptp_registers *regs;
+	struct gianfar_ptp_registers __iomem *regs;
 	spinlock_t lock; /* protects regs */
 	struct ptp_clock *clock;
 	struct ptp_clock_info caps;
@@ -412,6 +414,7 @@ static struct ptp_clock_info ptp_gianfar_caps = {
 	.n_alarm	= 0,
 	.n_ext_ts	= N_EXT_TS,
 	.n_per_out	= 0,
+	.n_pins		= 0,
 	.pps		= 1,
 	.adjfreq	= ptp_gianfar_adjfreq,
 	.adjtime	= ptp_gianfar_adjtime,
@@ -449,7 +452,9 @@ static int gianfar_ptp_probe(struct platform_device *dev)
 	err = -ENODEV;
 
 	etsects->caps = ptp_gianfar_caps;
-	etsects->cksel = DEFAULT_CKSEL;
+
+	if (get_of_u32(node, "fsl,cksel", &etsects->cksel))
+		etsects->cksel = DEFAULT_CKSEL;
 
 	if (get_of_u32(node, "fsl,tclk-period", &etsects->tclk_period) ||
 	    get_of_u32(node, "fsl,tmr-prsc", &etsects->tmr_prsc) ||
@@ -516,11 +521,12 @@ static int gianfar_ptp_probe(struct platform_device *dev)
 	}
 	gfar_phc_index = ptp_clock_index(etsects->clock);
 
-	dev_set_drvdata(&dev->dev, etsects);
+	platform_set_drvdata(dev, etsects);
 
 	return 0;
 
 no_clock:
+	iounmap(etsects->regs);
 no_ioremap:
 	release_resource(etsects->rsrc);
 no_resource:
@@ -533,7 +539,7 @@ no_memory:
 
 static int gianfar_ptp_remove(struct platform_device *dev)
 {
-	struct etsects *etsects = dev_get_drvdata(&dev->dev);
+	struct etsects *etsects = platform_get_drvdata(dev);
 
 	gfar_write(&etsects->regs->tmr_temask, 0);
 	gfar_write(&etsects->regs->tmr_ctrl,   0);

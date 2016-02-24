@@ -5,7 +5,7 @@
  *
  * GPL LICENSE SUMMARY
  *
- * Copyright(c) 2005 - 2012 Intel Corporation. All rights reserved.
+ * Copyright(c) 2005 - 2014 Intel Corporation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of version 2 of the GNU General Public License as
@@ -22,7 +22,7 @@
  * USA
  *
  * The full GNU General Public License is included in this distribution
- * in the file called LICENSE.GPL.
+ * in the file called COPYING.
  *
  * Contact Information:
  *  Intel Linux Wireless <ilw@linux.intel.com>
@@ -30,7 +30,7 @@
  *
  * BSD LICENSE
  *
- * Copyright(c) 2005 - 2012 Intel Corporation. All rights reserved.
+ * Copyright(c) 2005 - 2014 Intel Corporation. All rights reserved.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -838,10 +838,6 @@ struct iwl_qosparam_cmd {
 #define STA_MODIFY_DELBA_TID_MSK	0x10
 #define STA_MODIFY_SLEEP_TX_COUNT_MSK	0x20
 
-/* Receiver address (actually, Rx station's index into station table),
- * combined with Traffic ID (QOS priority), in format used by Tx Scheduler */
-#define BUILD_RAxTID(sta_id, tid)	(((sta_id) << 4) + (tid))
-
 /* agn */
 struct iwl_keyinfo {
 	__le16 key_flags;
@@ -970,21 +966,21 @@ struct iwl_rem_sta_cmd {
 
 
 /* WiFi queues mask */
-#define IWL_SCD_BK_MSK			cpu_to_le32(BIT(0))
-#define IWL_SCD_BE_MSK			cpu_to_le32(BIT(1))
-#define IWL_SCD_VI_MSK			cpu_to_le32(BIT(2))
-#define IWL_SCD_VO_MSK			cpu_to_le32(BIT(3))
-#define IWL_SCD_MGMT_MSK		cpu_to_le32(BIT(3))
+#define IWL_SCD_BK_MSK			BIT(0)
+#define IWL_SCD_BE_MSK			BIT(1)
+#define IWL_SCD_VI_MSK			BIT(2)
+#define IWL_SCD_VO_MSK			BIT(3)
+#define IWL_SCD_MGMT_MSK		BIT(3)
 
 /* PAN queues mask */
-#define IWL_PAN_SCD_BK_MSK		cpu_to_le32(BIT(4))
-#define IWL_PAN_SCD_BE_MSK		cpu_to_le32(BIT(5))
-#define IWL_PAN_SCD_VI_MSK		cpu_to_le32(BIT(6))
-#define IWL_PAN_SCD_VO_MSK		cpu_to_le32(BIT(7))
-#define IWL_PAN_SCD_MGMT_MSK		cpu_to_le32(BIT(7))
-#define IWL_PAN_SCD_MULTICAST_MSK	cpu_to_le32(BIT(8))
+#define IWL_PAN_SCD_BK_MSK		BIT(4)
+#define IWL_PAN_SCD_BE_MSK		BIT(5)
+#define IWL_PAN_SCD_VI_MSK		BIT(6)
+#define IWL_PAN_SCD_VO_MSK		BIT(7)
+#define IWL_PAN_SCD_MGMT_MSK		BIT(7)
+#define IWL_PAN_SCD_MULTICAST_MSK	BIT(8)
 
-#define IWL_AGG_TX_QUEUE_MSK		cpu_to_le32(0xffc00)
+#define IWL_AGG_TX_QUEUE_MSK		0xffc00
 
 #define IWL_DROP_ALL			BIT(1)
 
@@ -1009,10 +1005,15 @@ struct iwl_rem_sta_cmd {
  *	1: Dump multiple MSDU according to PS, INVALID STA, TTL, TID disable.
  *	2: Dump all FIFO
  */
-struct iwl_txfifo_flush_cmd {
+struct iwl_txfifo_flush_cmd_v3 {
 	__le32 queue_control;
 	__le16 flush_control;
 	__le16 reserved;
+} __packed;
+
+struct iwl_txfifo_flush_cmd_v2 {
+	__le16 queue_control;
+	__le16 flush_control;
 } __packed;
 
 /*
@@ -1225,14 +1226,6 @@ struct iwl_rx_mpdu_res_start {
 #define TX_CMD_SEC_KEY128	0x08
 
 /*
- * security overhead sizes
- */
-#define WEP_IV_LEN 4
-#define WEP_ICV_LEN 4
-#define CCMP_MIC_LEN 8
-#define TKIP_ICV_LEN 4
-
-/*
  * REPLY_TX = 0x1c (command)
  */
 
@@ -1403,6 +1396,7 @@ enum {
 
 #define AGG_TX_STATUS_MSK	0x00000fff	/* bits 0:11 */
 #define AGG_TX_TRY_MSK		0x0000f000	/* bits 12:15 */
+#define AGG_TX_TRY_POS		12
 
 #define AGG_TX_STATE_LAST_SENT_MSK  (AGG_TX_STATE_LAST_SENT_TTL_MSK | \
 				     AGG_TX_STATE_LAST_SENT_TRY_CNT_MSK | \
@@ -1525,6 +1519,7 @@ struct iwl_compressed_ba_resp {
 	__le16 scd_ssn;
 	u8 txed;	/* number of frames sent */
 	u8 txed_2_done; /* number of frames acked */
+	__le16 reserved1;
 } __packed;
 
 /*
@@ -3695,7 +3690,7 @@ struct iwl_bt_uart_msg {
 	u8 frame5;
 	u8 frame6;
 	u8 frame7;
-} __attribute__((packed));
+} __packed;
 
 struct iwl_bt_coex_profile_notif {
 	struct iwl_bt_uart_msg last_bt_uart_msg;
@@ -3703,7 +3698,7 @@ struct iwl_bt_coex_profile_notif {
 	u8 bt_traffic_load; /* 0 .. 3? */
 	u8 bt_ci_compliance; /* 0 - not complied, 1 - complied */
 	u8 reserved;
-} __attribute__((packed));
+} __packed;
 
 #define IWL_BT_COEX_PRIO_TBL_SHARED_ANTENNA_POS	0
 #define IWL_BT_COEX_PRIO_TBL_SHARED_ANTENNA_MSK	0x1
@@ -3752,7 +3747,7 @@ enum bt_coex_prio_table_priorities {
 
 struct iwl_bt_coex_prio_table_cmd {
 	u8 prio_tbl[BT_COEX_PRIO_TBL_EVT_MAX];
-} __attribute__((packed));
+} __packed;
 
 #define IWL_BT_COEX_ENV_CLOSE	0
 #define IWL_BT_COEX_ENV_OPEN	1
@@ -3764,7 +3759,7 @@ struct iwl_bt_coex_prot_env_cmd {
 	u8 action; /* 0 = closed, 1 = open */
 	u8 type; /* 0 .. 15 */
 	u8 reserved[2];
-} __attribute__((packed));
+} __packed;
 
 /*
  * REPLY_D3_CONFIG
@@ -3895,6 +3890,24 @@ struct iwlagn_wowlan_kek_kck_material_cmd {
 	__le16	kck_len;
 	__le16	kek_len;
 	__le64	replay_ctr;
+} __packed;
+
+#define RF_KILL_INDICATOR_FOR_WOWLAN	0x87
+
+/*
+ * REPLY_WOWLAN_GET_STATUS = 0xe5
+ */
+struct iwlagn_wowlan_status {
+	__le64 replay_ctr;
+	__le32 rekey_status;
+	__le32 wakeup_reason;
+	u8 pattern_number;
+	u8 reserved1;
+	__le16 qos_seq_ctr[8];
+	__le16 non_qos_seq_ctr;
+	__le16 reserved2;
+	union iwlagn_all_tsc_rsc tsc_rsc;
+	__le16 reserved3;
 } __packed;
 
 /*

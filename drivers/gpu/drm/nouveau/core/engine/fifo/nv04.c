@@ -22,12 +22,14 @@
  * Authors: Ben Skeggs
  */
 
-#include <core/os.h>
-#include <core/class.h>
+#include <core/client.h>
+#include <nvif/unpack.h>
+#include <nvif/class.h>
 #include <core/engctx.h>
 #include <core/namedb.h>
 #include <core/handle.h>
 #include <core/ramht.h>
+#include <core/event.h>
 
 #include <subdev/instmem.h>
 #include <subdev/instmem/nv04.h>
@@ -116,16 +118,23 @@ nv04_fifo_chan_ctor(struct nouveau_object *parent,
 		    struct nouveau_oclass *oclass, void *data, u32 size,
 		    struct nouveau_object **pobject)
 {
+	union {
+		struct nv03_channel_dma_v0 v0;
+	} *args = data;
 	struct nv04_fifo_priv *priv = (void *)engine;
 	struct nv04_fifo_chan *chan;
-	struct nv03_channel_dma_class *args = data;
 	int ret;
 
-	if (size < sizeof(*args))
-		return -EINVAL;
+	nv_ioctl(parent, "create channel dma size %d\n", size);
+	if (nvif_unpack(args->v0, 0, 0, false)) {
+		nv_ioctl(parent, "create channel dma vers %d pushbuf %08x "
+				 "offset %016llx\n", args->v0.version,
+			 args->v0.pushbuf, args->v0.offset);
+	} else
+		return ret;
 
 	ret = nouveau_fifo_channel_create(parent, engine, oclass, 0, 0x800000,
-					  0x10000, args->pushbuf,
+					  0x10000, args->v0.pushbuf,
 					  (1ULL << NVDEV_ENGINE_DMAOBJ) |
 					  (1ULL << NVDEV_ENGINE_SW) |
 					  (1ULL << NVDEV_ENGINE_GR), &chan);
@@ -133,13 +142,15 @@ nv04_fifo_chan_ctor(struct nouveau_object *parent,
 	if (ret)
 		return ret;
 
+	args->v0.chid = chan->base.chid;
+
 	nv_parent(chan)->object_attach = nv04_fifo_object_attach;
 	nv_parent(chan)->object_detach = nv04_fifo_object_detach;
 	nv_parent(chan)->context_attach = nv04_fifo_context_attach;
 	chan->ramfc = chan->base.chid * 32;
 
-	nv_wo32(priv->ramfc, chan->ramfc + 0x00, args->offset);
-	nv_wo32(priv->ramfc, chan->ramfc + 0x04, args->offset);
+	nv_wo32(priv->ramfc, chan->ramfc + 0x00, args->v0.offset);
+	nv_wo32(priv->ramfc, chan->ramfc + 0x04, args->v0.offset);
 	nv_wo32(priv->ramfc, chan->ramfc + 0x08, chan->base.pushgpu->addr >> 4);
 	nv_wo32(priv->ramfc, chan->ramfc + 0x10,
 			     NV_PFIFO_CACHE1_DMA_FETCH_TRIG_128_BYTES |
@@ -241,13 +252,15 @@ nv04_fifo_ofuncs = {
 	.dtor = nv04_fifo_chan_dtor,
 	.init = nv04_fifo_chan_init,
 	.fini = nv04_fifo_chan_fini,
+	.map  = _nouveau_fifo_channel_map,
 	.rd32 = _nouveau_fifo_channel_rd32,
 	.wr32 = _nouveau_fifo_channel_wr32,
+	.ntfy = _nouveau_fifo_channel_ntfy
 };
 
 static struct nouveau_oclass
 nv04_fifo_sclass[] = {
-	{ NV03_CHANNEL_DMA_CLASS, &nv04_fifo_ofuncs },
+	{ NV03_CHANNEL_DMA, &nv04_fifo_ofuncs },
 	{}
 };
 
@@ -398,6 +411,98 @@ out:
 	return handled;
 }
 
+static void
+nv04_fifo_cache_error(struct nouveau_device *device,
+		struct nv04_fifo_priv *priv, u32 chid, u32 get)
+{
+	u32 mthd, data;
+	int ptr;
+
+	/* NV_PFIFO_CACHE1_GET actually goes to 0xffc before wrapping on my
+	 * G80 chips, but CACHE1 isn't big enough for this much data.. Tests
+	 * show that it wraps around to the start at GET=0x800.. No clue as to
+	 * why..
+	 */
+	ptr = (get & 0x7ff) >> 2;
+
+	if (device->card_type < NV_40) {
+		mthd = nv_rd32(priv, NV04_PFIFO_CACHE1_METHOD(ptr));
+		data = nv_rd32(priv, NV04_PFIFO_CACHE1_DATA(ptr));
+	} else {
+		mthd = nv_rd32(priv, NV40_PFIFO_CACHE1_METHOD(ptr));
+		data = nv_rd32(priv, NV40_PFIFO_CACHE1_DATA(ptr));
+	}
+
+	if (!nv04_fifo_swmthd(priv, chid, mthd, data)) {
+		const char *client_name =
+			nouveau_client_name_for_fifo_chid(&priv->base, chid);
+		nv_error(priv,
+			 "CACHE_ERROR - ch %d [%s] subc %d mthd 0x%04x data 0x%08x\n",
+			 chid, client_name, (mthd >> 13) & 7, mthd & 0x1ffc,
+			 data);
+	}
+
+	nv_wr32(priv, NV04_PFIFO_CACHE1_DMA_PUSH, 0);
+	nv_wr32(priv, NV03_PFIFO_INTR_0, NV_PFIFO_INTR_CACHE_ERROR);
+
+	nv_wr32(priv, NV03_PFIFO_CACHE1_PUSH0,
+		nv_rd32(priv, NV03_PFIFO_CACHE1_PUSH0) & ~1);
+	nv_wr32(priv, NV03_PFIFO_CACHE1_GET, get + 4);
+	nv_wr32(priv, NV03_PFIFO_CACHE1_PUSH0,
+		nv_rd32(priv, NV03_PFIFO_CACHE1_PUSH0) | 1);
+	nv_wr32(priv, NV04_PFIFO_CACHE1_HASH, 0);
+
+	nv_wr32(priv, NV04_PFIFO_CACHE1_DMA_PUSH,
+		nv_rd32(priv, NV04_PFIFO_CACHE1_DMA_PUSH) | 1);
+	nv_wr32(priv, NV04_PFIFO_CACHE1_PULL0, 1);
+}
+
+static void
+nv04_fifo_dma_pusher(struct nouveau_device *device, struct nv04_fifo_priv *priv,
+		u32 chid)
+{
+	const char *client_name;
+	u32 dma_get = nv_rd32(priv, 0x003244);
+	u32 dma_put = nv_rd32(priv, 0x003240);
+	u32 push = nv_rd32(priv, 0x003220);
+	u32 state = nv_rd32(priv, 0x003228);
+
+	client_name = nouveau_client_name_for_fifo_chid(&priv->base, chid);
+
+	if (device->card_type == NV_50) {
+		u32 ho_get = nv_rd32(priv, 0x003328);
+		u32 ho_put = nv_rd32(priv, 0x003320);
+		u32 ib_get = nv_rd32(priv, 0x003334);
+		u32 ib_put = nv_rd32(priv, 0x003330);
+
+		nv_error(priv,
+			 "DMA_PUSHER - ch %d [%s] get 0x%02x%08x put 0x%02x%08x ib_get 0x%08x ib_put 0x%08x state 0x%08x (err: %s) push 0x%08x\n",
+			 chid, client_name, ho_get, dma_get, ho_put, dma_put,
+			 ib_get, ib_put, state, nv_dma_state_err(state), push);
+
+		/* METHOD_COUNT, in DMA_STATE on earlier chipsets */
+		nv_wr32(priv, 0x003364, 0x00000000);
+		if (dma_get != dma_put || ho_get != ho_put) {
+			nv_wr32(priv, 0x003244, dma_put);
+			nv_wr32(priv, 0x003328, ho_put);
+		} else
+		if (ib_get != ib_put)
+			nv_wr32(priv, 0x003334, ib_put);
+	} else {
+		nv_error(priv,
+			 "DMA_PUSHER - ch %d [%s] get 0x%08x put 0x%08x state 0x%08x (err: %s) push 0x%08x\n",
+			 chid, client_name, dma_get, dma_put, state,
+			 nv_dma_state_err(state), push);
+
+		if (dma_get != dma_put)
+			nv_wr32(priv, 0x003244, dma_put);
+	}
+
+	nv_wr32(priv, 0x003228, 0x00000000);
+	nv_wr32(priv, 0x003220, 0x00000001);
+	nv_wr32(priv, 0x002100, NV_PFIFO_INTR_DMA_PUSHER);
+}
+
 void
 nv04_fifo_intr(struct nouveau_subdev *subdev)
 {
@@ -416,96 +521,12 @@ nv04_fifo_intr(struct nouveau_subdev *subdev)
 		get  = nv_rd32(priv, NV03_PFIFO_CACHE1_GET);
 
 		if (status & NV_PFIFO_INTR_CACHE_ERROR) {
-			uint32_t mthd, data;
-			int ptr;
-
-			/* NV_PFIFO_CACHE1_GET actually goes to 0xffc before
-			 * wrapping on my G80 chips, but CACHE1 isn't big
-			 * enough for this much data.. Tests show that it
-			 * wraps around to the start at GET=0x800.. No clue
-			 * as to why..
-			 */
-			ptr = (get & 0x7ff) >> 2;
-
-			if (device->card_type < NV_40) {
-				mthd = nv_rd32(priv,
-					NV04_PFIFO_CACHE1_METHOD(ptr));
-				data = nv_rd32(priv,
-					NV04_PFIFO_CACHE1_DATA(ptr));
-			} else {
-				mthd = nv_rd32(priv,
-					NV40_PFIFO_CACHE1_METHOD(ptr));
-				data = nv_rd32(priv,
-					NV40_PFIFO_CACHE1_DATA(ptr));
-			}
-
-			if (!nv04_fifo_swmthd(priv, chid, mthd, data)) {
-				nv_error(priv, "CACHE_ERROR - Ch %d/%d "
-					      "Mthd 0x%04x Data 0x%08x\n",
-					chid, (mthd >> 13) & 7, mthd & 0x1ffc,
-					data);
-			}
-
-			nv_wr32(priv, NV04_PFIFO_CACHE1_DMA_PUSH, 0);
-			nv_wr32(priv, NV03_PFIFO_INTR_0,
-						NV_PFIFO_INTR_CACHE_ERROR);
-
-			nv_wr32(priv, NV03_PFIFO_CACHE1_PUSH0,
-				nv_rd32(priv, NV03_PFIFO_CACHE1_PUSH0) & ~1);
-			nv_wr32(priv, NV03_PFIFO_CACHE1_GET, get + 4);
-			nv_wr32(priv, NV03_PFIFO_CACHE1_PUSH0,
-				nv_rd32(priv, NV03_PFIFO_CACHE1_PUSH0) | 1);
-			nv_wr32(priv, NV04_PFIFO_CACHE1_HASH, 0);
-
-			nv_wr32(priv, NV04_PFIFO_CACHE1_DMA_PUSH,
-				nv_rd32(priv, NV04_PFIFO_CACHE1_DMA_PUSH) | 1);
-			nv_wr32(priv, NV04_PFIFO_CACHE1_PULL0, 1);
-
+			nv04_fifo_cache_error(device, priv, chid, get);
 			status &= ~NV_PFIFO_INTR_CACHE_ERROR;
 		}
 
 		if (status & NV_PFIFO_INTR_DMA_PUSHER) {
-			u32 dma_get = nv_rd32(priv, 0x003244);
-			u32 dma_put = nv_rd32(priv, 0x003240);
-			u32 push = nv_rd32(priv, 0x003220);
-			u32 state = nv_rd32(priv, 0x003228);
-
-			if (device->card_type == NV_50) {
-				u32 ho_get = nv_rd32(priv, 0x003328);
-				u32 ho_put = nv_rd32(priv, 0x003320);
-				u32 ib_get = nv_rd32(priv, 0x003334);
-				u32 ib_put = nv_rd32(priv, 0x003330);
-
-				nv_error(priv, "DMA_PUSHER - Ch %d Get 0x%02x%08x "
-				     "Put 0x%02x%08x IbGet 0x%08x IbPut 0x%08x "
-				     "State 0x%08x (err: %s) Push 0x%08x\n",
-					chid, ho_get, dma_get, ho_put,
-					dma_put, ib_get, ib_put, state,
-					nv_dma_state_err(state),
-					push);
-
-				/* METHOD_COUNT, in DMA_STATE on earlier chipsets */
-				nv_wr32(priv, 0x003364, 0x00000000);
-				if (dma_get != dma_put || ho_get != ho_put) {
-					nv_wr32(priv, 0x003244, dma_put);
-					nv_wr32(priv, 0x003328, ho_put);
-				} else
-				if (ib_get != ib_put) {
-					nv_wr32(priv, 0x003334, ib_put);
-				}
-			} else {
-				nv_error(priv, "DMA_PUSHER - Ch %d Get 0x%08x "
-					     "Put 0x%08x State 0x%08x (err: %s) Push 0x%08x\n",
-					chid, dma_get, dma_put, state,
-					nv_dma_state_err(state), push);
-
-				if (dma_get != dma_put)
-					nv_wr32(priv, 0x003244, dma_put);
-			}
-
-			nv_wr32(priv, 0x003228, 0x00000000);
-			nv_wr32(priv, 0x003220, 0x00000001);
-			nv_wr32(priv, 0x002100, NV_PFIFO_INTR_DMA_PUSHER);
+			nv04_fifo_dma_pusher(device, priv, chid);
 			status &= ~NV_PFIFO_INTR_DMA_PUSHER;
 		}
 
@@ -527,6 +548,12 @@ nv04_fifo_intr(struct nouveau_subdev *subdev)
 			if (status & 0x00000010) {
 				status &= ~0x00000010;
 				nv_wr32(priv, 0x002100, 0x00000010);
+			}
+
+			if (status & 0x40000000) {
+				nv_wr32(priv, 0x002100, 0x40000000);
+				nouveau_fifo_uevent(&priv->base);
+				status &= ~0x40000000;
 			}
 		}
 
@@ -617,8 +644,8 @@ nv04_fifo_init(struct nouveau_object *object)
 	return 0;
 }
 
-struct nouveau_oclass
-nv04_fifo_oclass = {
+struct nouveau_oclass *
+nv04_fifo_oclass = &(struct nouveau_oclass) {
 	.handle = NV_ENGINE(FIFO, 0x04),
 	.ofuncs = &(struct nouveau_ofuncs) {
 		.ctor = nv04_fifo_ctor,

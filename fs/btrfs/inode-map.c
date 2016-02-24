@@ -26,6 +26,7 @@
 #include "inode-map.h"
 #include "transaction.h"
 
+#ifndef CONFIG_BTRFS_ZADARA
 static int caching_kthread(void *data)
 {
 	struct btrfs_root *root = data;
@@ -55,7 +56,7 @@ static int caching_kthread(void *data)
 	key.type = BTRFS_INODE_ITEM_KEY;
 again:
 	/* need to make sure the commit_root doesn't disappear */
-	mutex_lock(&root->fs_commit_mutex);
+	down_read(&fs_info->commit_root_sem);
 
 	ret = btrfs_search_slot(NULL, root, &key, path, 0, 0);
 	if (ret < 0)
@@ -78,10 +79,8 @@ again:
 			    btrfs_transaction_in_commit(fs_info)) {
 				leaf = path->nodes[0];
 
-				if (btrfs_header_nritems(leaf) == 0) {
-					WARN_ON(1);
+				if (WARN_ON(btrfs_header_nritems(leaf) == 0))
 					break;
-				}
 
 				/*
 				 * Save the key so we can advances forward
@@ -89,8 +88,8 @@ again:
 				 */
 				btrfs_item_key_to_cpu(leaf, &key, 0);
 				btrfs_release_path(path);
-				root->cache_progress = last;
-				mutex_unlock(&root->fs_commit_mutex);
+				root->ino_cache_progress = last;
+				up_read(&fs_info->commit_root_sem);
 				schedule_timeout(1);
 				goto again;
 			} else
@@ -108,7 +107,7 @@ again:
 		if (last != (u64)-1 && last + 1 != key.objectid) {
 			__btrfs_add_free_space(ctl, last + 1,
 					       key.objectid - last - 1);
-			wake_up(&root->cache_wait);
+			wake_up(&root->ino_cache_wait);
 		}
 
 		last = key.objectid;
@@ -121,15 +120,15 @@ next:
 				       root->highest_objectid - last - 1);
 	}
 
-	spin_lock(&root->cache_lock);
-	root->cached = BTRFS_CACHE_FINISHED;
-	spin_unlock(&root->cache_lock);
+	spin_lock(&root->ino_cache_lock);
+	root->ino_cache_state = BTRFS_CACHE_FINISHED;
+	spin_unlock(&root->ino_cache_lock);
 
-	root->cache_progress = (u64)-1;
+	root->ino_cache_progress = (u64)-1;
 	btrfs_unpin_free_ino(root);
 out:
-	wake_up(&root->cache_wait);
-	mutex_unlock(&root->fs_commit_mutex);
+	wake_up(&root->ino_cache_wait);
+	up_read(&fs_info->commit_root_sem);
 
 	btrfs_free_path(path);
 
@@ -146,20 +145,20 @@ static void start_caching(struct btrfs_root *root)
 	if (!btrfs_test_opt(root, INODE_MAP_CACHE))
 		return;
 
-	spin_lock(&root->cache_lock);
-	if (root->cached != BTRFS_CACHE_NO) {
-		spin_unlock(&root->cache_lock);
+	spin_lock(&root->ino_cache_lock);
+	if (root->ino_cache_state != BTRFS_CACHE_NO) {
+		spin_unlock(&root->ino_cache_lock);
 		return;
 	}
 
-	root->cached = BTRFS_CACHE_STARTED;
-	spin_unlock(&root->cache_lock);
+	root->ino_cache_state = BTRFS_CACHE_STARTED;
+	spin_unlock(&root->ino_cache_lock);
 
 	ret = load_free_ino_cache(root->fs_info, root);
 	if (ret == 1) {
-		spin_lock(&root->cache_lock);
-		root->cached = BTRFS_CACHE_FINISHED;
-		spin_unlock(&root->cache_lock);
+		spin_lock(&root->ino_cache_lock);
+		root->ino_cache_state = BTRFS_CACHE_FINISHED;
+		spin_unlock(&root->ino_cache_lock);
 		return;
 	}
 
@@ -176,13 +175,21 @@ static void start_caching(struct btrfs_root *root)
 				       BTRFS_LAST_FREE_OBJECTID - objectid + 1);
 	}
 
-	tsk = kthread_run(caching_kthread, root, "btrfs-ino-cache-%llu\n",
+	tsk = kthread_run(caching_kthread, root, "btrfs-ino-cache-%llu",
 			  root->root_key.objectid);
-	BUG_ON(IS_ERR(tsk)); /* -ENOMEM */
+	if (IS_ERR(tsk)) {
+		btrfs_warn(root->fs_info, "failed to start inode caching task");
+		btrfs_clear_and_info(root, CHANGE_INODE_CACHE,
+				"disabling inode map caching");
+	}
 }
+#endif /*CONFIG_BTRFS_ZADARA*/
 
 int btrfs_find_free_ino(struct btrfs_root *root, u64 *objectid)
 {
+#ifdef CONFIG_BTRFS_ZADARA
+	return btrfs_find_free_objectid(root, objectid);
+#else /*CONFIG_BTRFS_ZADARA*/
 	if (!btrfs_test_opt(root, INODE_MAP_CACHE))
 		return btrfs_find_free_objectid(root, objectid);
 
@@ -194,68 +201,58 @@ again:
 
 	start_caching(root);
 
-	wait_event(root->cache_wait,
-		   root->cached == BTRFS_CACHE_FINISHED ||
+	wait_event(root->ino_cache_wait,
+		   root->ino_cache_state == BTRFS_CACHE_FINISHED ||
 		   root->free_ino_ctl->free_space > 0);
 
-	if (root->cached == BTRFS_CACHE_FINISHED &&
+	if (root->ino_cache_state == BTRFS_CACHE_FINISHED &&
 	    root->free_ino_ctl->free_space == 0)
 		return -ENOSPC;
 	else
 		goto again;
+#endif /*CONFIG_BTRFS_ZADARA*/
 }
 
 void btrfs_return_ino(struct btrfs_root *root, u64 objectid)
 {
-	struct btrfs_free_space_ctl *ctl = root->free_ino_ctl;
+#ifndef CONFIG_BTRFS_ZADARA
 	struct btrfs_free_space_ctl *pinned = root->free_ino_pinned;
 
 	if (!btrfs_test_opt(root, INODE_MAP_CACHE))
 		return;
-
 again:
-	if (root->cached == BTRFS_CACHE_FINISHED) {
-		__btrfs_add_free_space(ctl, objectid, 1);
+	if (root->ino_cache_state == BTRFS_CACHE_FINISHED) {
+		__btrfs_add_free_space(pinned, objectid, 1);
 	} else {
-		/*
-		 * If we are in the process of caching free ino chunks,
-		 * to avoid adding the same inode number to the free_ino
-		 * tree twice due to cross transaction, we'll leave it
-		 * in the pinned tree until a transaction is committed
-		 * or the caching work is done.
-		 */
-
-		mutex_lock(&root->fs_commit_mutex);
-		spin_lock(&root->cache_lock);
-		if (root->cached == BTRFS_CACHE_FINISHED) {
-			spin_unlock(&root->cache_lock);
-			mutex_unlock(&root->fs_commit_mutex);
+		down_write(&root->fs_info->commit_root_sem);
+		spin_lock(&root->ino_cache_lock);
+		if (root->ino_cache_state == BTRFS_CACHE_FINISHED) {
+			spin_unlock(&root->ino_cache_lock);
+			up_write(&root->fs_info->commit_root_sem);
 			goto again;
 		}
-		spin_unlock(&root->cache_lock);
+		spin_unlock(&root->ino_cache_lock);
 
 		start_caching(root);
 
-		if (objectid <= root->cache_progress ||
-		    objectid > root->highest_objectid)
-			__btrfs_add_free_space(ctl, objectid, 1);
-		else
-			__btrfs_add_free_space(pinned, objectid, 1);
+		__btrfs_add_free_space(pinned, objectid, 1);
 
-		mutex_unlock(&root->fs_commit_mutex);
+		up_write(&root->fs_info->commit_root_sem);
 	}
+#endif /*CONFIG_BTRFS_ZADARA*/
 }
 
 /*
- * When a transaction is committed, we'll move those inode numbers which
- * are smaller than root->cache_progress from pinned tree to free_ino tree,
- * and others will just be dropped, because the commit root we were
- * searching has changed.
+ * When a transaction is committed, we'll move those inode numbers which are
+ * smaller than root->ino_cache_progress from pinned tree to free_ino tree, and
+ * others will just be dropped, because the commit root we were searching has
+ * changed.
  *
- * Must be called with root->fs_commit_mutex held
+ * Must be called with root->fs_info->commit_root_sem held
  */
 void btrfs_unpin_free_ino(struct btrfs_root *root)
 {
+#ifndef CONFIG_BTRFS_ZADARA
 	struct btrfs_free_space_ctl *ctl = root->free_ino_ctl;
 	struct rb_root *rbroot = &root->free_ino_pinned->free_space_offset;
 	struct btrfs_free_space *info;
@@ -273,10 +270,10 @@ void btrfs_unpin_free_ino(struct btrfs_root *root)
 		info = rb_entry(n, struct btrfs_free_space, offset_index);
 		BUG_ON(info->bitmap); /* Logic error */
 
-		if (info->offset > root->cache_progress)
+		if (info->offset > root->ino_cache_progress)
 			goto free;
-		else if (info->offset + info->bytes > root->cache_progress)
-			count = root->cache_progress - info->offset + 1;
+		else if (info->offset + info->bytes > root->ino_cache_progress)
+			count = root->ino_cache_progress - info->offset + 1;
 		else
 			count = info->bytes;
 
@@ -285,8 +282,10 @@ free:
 		rb_erase(&info->offset_index, rbroot);
 		kfree(info);
 	}
+#endif /*CONFIG_BTRFS_ZADARA*/
 }
 
+#ifndef CONFIG_BTRFS_ZADARA
 #define INIT_THRESHOLD	(((1024 * 32) / 2) / sizeof(struct btrfs_free_space))
 #define INODES_PER_BITMAP (PAGE_CACHE_SIZE * 8)
 
@@ -365,9 +364,11 @@ static struct btrfs_free_space_op pinned_free_ino_op = {
 	.recalc_thresholds	= pinned_recalc_thresholds,
 	.use_bitmap		= pinned_use_bitmap,
 };
+#endif /*CONFIG_BTRFS_ZADARA*/
 
 void btrfs_init_free_ino_ctl(struct btrfs_root *root)
 {
+#ifndef CONFIG_BTRFS_ZADARA
 	struct btrfs_free_space_ctl *ctl = root->free_ino_ctl;
 	struct btrfs_free_space_ctl *pinned = root->free_ino_pinned;
 
@@ -390,11 +391,15 @@ void btrfs_init_free_ino_ctl(struct btrfs_root *root)
 	pinned->private = NULL;
 	pinned->extents_thresh = 0;
 	pinned->op = &pinned_free_ino_op;
+#endif /*CONFIG_BTRFS_ZADARA*/	
 }
 
 int btrfs_save_ino_cache(struct btrfs_root *root,
 			 struct btrfs_trans_handle *trans)
 {
+#ifdef CONFIG_BTRFS_ZADARA
+	return 0;
+#else /*CONFIG_BTRFS_ZADARA*/
 	struct btrfs_free_space_ctl *ctl = root->free_ino_ctl;
 	struct btrfs_path *path;
 	struct inode *inode;
@@ -412,8 +417,7 @@ int btrfs_save_ino_cache(struct btrfs_root *root,
 		return 0;
 
 	/* Don't save inode cache if we are deleting this root */
-	if (btrfs_root_refs(&root->root_item) == 0 &&
-	    root != root->fs_info->tree_root)
+	if (btrfs_root_refs(&root->root_item) == 0)
 		return 0;
 
 	if (!btrfs_test_opt(root, INODE_MAP_CACHE))
@@ -429,11 +433,12 @@ int btrfs_save_ino_cache(struct btrfs_root *root,
 	num_bytes = trans->bytes_reserved;
 	/*
 	 * 1 item for inode item insertion if need
-	 * 3 items for inode item update (in the worst case)
+	 * 4 items for inode item update (in the worst case)
+	 * 1 items for slack space if we need do truncation
 	 * 1 item for free space object
 	 * 3 items for pre-allocation
 	 */
-	trans->bytes_reserved = btrfs_calc_trans_metadata_size(root, 8);
+	trans->bytes_reserved = btrfs_calc_trans_metadata_size(root, 10);
 	ret = btrfs_block_rsv_add(root, trans->block_rsv,
 				  trans->bytes_reserved,
 				  BTRFS_RESERVE_NO_FLUSH);
@@ -466,20 +471,21 @@ again:
 	}
 
 	if (i_size_read(inode) > 0) {
-		ret = btrfs_truncate_free_space_cache(root, trans, path, inode);
+		ret = btrfs_truncate_free_space_cache(root, trans, inode);
 		if (ret) {
-			btrfs_abort_transaction(trans, root, ret);
+			if (ret != -ENOSPC)
+				btrfs_abort_transaction(trans, root, ret);
 			goto out_put;
 		}
 	}
 
-	spin_lock(&root->cache_lock);
-	if (root->cached != BTRFS_CACHE_FINISHED) {
+	spin_lock(&root->ino_cache_lock);
+	if (root->ino_cache_state != BTRFS_CACHE_FINISHED) {
 		ret = -1;
-		spin_unlock(&root->cache_lock);
+		spin_unlock(&root->ino_cache_lock);
 		goto out_put;
 	}
-	spin_unlock(&root->cache_lock);
+	spin_unlock(&root->ino_cache_lock);
 
 	spin_lock(&ctl->tree_lock);
 	prealloc = sizeof(struct btrfs_free_space) * ctl->free_extents;
@@ -502,7 +508,7 @@ again:
 	}
 	btrfs_free_reserved_data_space(inode, prealloc);
 
-	ret = btrfs_write_out_ino_cache(root, trans, path);
+	ret = btrfs_write_out_ino_cache(root, trans, path, inode);
 out_put:
 	iput(inode);
 out_release:
@@ -515,6 +521,7 @@ out:
 
 	btrfs_free_path(path);
 	return ret;
+#endif /*CONFIG_BTRFS_ZADARA*/
 }
 
 static int btrfs_find_highest_objectid(struct btrfs_root *root, u64 *objectid)

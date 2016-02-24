@@ -87,7 +87,7 @@ static struct spi_board_info db120_spi_info[] = {
 
 static struct ath79_spi_platform_data db120_spi_data = {
 	.bus_num	= 0,
-	.num_chipselect	= 1,
+	.num_chipselect = 1,
 };
 
 #ifdef CONFIG_PCI
@@ -113,7 +113,7 @@ static void __init db120_pci_init(u8 *eeprom)
 	ath79_register_pci();
 }
 #else
-static inline void db120_pci_init(void) {}
+static inline void db120_pci_init(u8 *eeprom) {}
 #endif /* CONFIG_PCI */
 
 static void __init db120_setup(void)

@@ -17,17 +17,17 @@
  */
 
 #include "xfs.h"
-#include "xfs_da_btree.h"
-#include "xfs_bmap_btree.h"
+#include "xfs_format.h"
+#include "xfs_log_format.h"
+#include "xfs_trans_resv.h"
+#include "xfs_sb.h"
+#include "xfs_ag.h"
+#include "xfs_mount.h"
+#include "xfs_da_format.h"
 #include "xfs_inode.h"
 #include "xfs_attr.h"
 #include "xfs_attr_leaf.h"
 #include "xfs_acl.h"
-#include "xfs_vnodeops.h"
-#ifdef CONFIG_XFS_ZADARA
-#include "xfs_sb.h"
-#include "xfs_mount.h"
-#endif /*CONFIG_XFS_ZADARA*/
 
 #include <linux/posix_acl_xattr.h>
 #include <linux/xattr.h>
@@ -49,7 +49,7 @@ xfs_xattr_get(struct dentry *dentry, const char *name,
 		value = NULL;
 	}
 
-	error = -xfs_attr_get(ip, (unsigned char *)name, value, &asize, xflags);
+	error = xfs_attr_get(ip, (unsigned char *)name, value, &asize, xflags);
 	if (error)
 		return error;
 	return asize;
@@ -60,6 +60,7 @@ xfs_xattr_set(struct dentry *dentry, const char *name, const void *value,
 		size_t size, int flags, int xflags)
 {
 	struct xfs_inode *ip = XFS_I(dentry->d_inode);
+
 #ifdef CONFIG_XFS_ZADARA
 	int ret = 0;
 	ZXFSLOG_TAG(ip->i_mount, Z_KDEB1, ZKLOG_TAG_XATTR, "ino=%llu name=[%s] flags=0x%x xflags=0x%x val=[%.*s]", ip->i_ino, name, flags, xflags, min_t(int, size, 16), (const char*)(value ? value : "NULL"));
@@ -71,7 +72,7 @@ xfs_xattr_set(struct dentry *dentry, const char *name, const void *value,
 	if (strcmp(name, "") == 0)
 		return -EINVAL;
 #endif /*CONFIG_XFS_ZADARA*/
-
+	
 	/* Convert Linux syscall to XFS internal ATTR flags */
 	if (flags & XATTR_CREATE)
 		xflags |= ATTR_CREATE;
@@ -80,19 +81,19 @@ xfs_xattr_set(struct dentry *dentry, const char *name, const void *value,
 
 #ifdef CONFIG_XFS_ZADARA
 	if (!value) {
-		ret = -xfs_attr_remove(ip, (unsigned char *)name, xflags);
+		ret = xfs_attr_remove(ip, (unsigned char *)name, xflags);
 		ZXFSLOG_TAG(ip->i_mount, ret == 0 || ret == -ENODATA ? Z_KDEB1 : Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu xfs_attr_remove(%s) flags=0x%x xflags=0x%x ret=%d", ip->i_ino, name, flags, xflags, ret);
 	} else {
-		ret = -xfs_attr_set(ip, (unsigned char *)name,
+		ret = xfs_attr_set(ip, (unsigned char *)name,
 				(void *)value, size, xflags);
 		ZXFSLOG_TAG(ip->i_mount, ret == 0 ? Z_KDEB1 : Z_KERR, ZKLOG_TAG_XATTR, "ino=%llu xfs_attr_set(%s) flags=0x%x xflags=0x%x ret=%d", ip->i_ino, name, flags, xflags, ret);
 	}
 	return ret;
 #else /*CONFIG_XFS_ZADARA*/
 	if (!value)
-		return -xfs_attr_remove(ip, (unsigned char *)name, xflags);
-	return -xfs_attr_set(ip, (unsigned char *)name,
-				(void *)value, size, xflags);
+		return xfs_attr_remove(ip, (unsigned char *)name, xflags);
+	return xfs_attr_set(ip, (unsigned char *)name,
+		(void *)value, size, xflags);
 #endif /*CONFIG_XFS_ZADARA*/
 }
 
@@ -122,8 +123,8 @@ const struct xattr_handler *xfs_xattr_handlers[] = {
 	&xfs_xattr_trusted_handler,
 	&xfs_xattr_security_handler,
 #ifdef CONFIG_XFS_POSIX_ACL
-	&xfs_xattr_acl_access_handler,
-	&xfs_xattr_acl_default_handler,
+	&posix_acl_access_xattr_handler,
+	&posix_acl_default_xattr_handler,
 #endif
 	NULL
 };

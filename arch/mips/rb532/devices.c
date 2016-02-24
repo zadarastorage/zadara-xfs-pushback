@@ -215,14 +215,15 @@ static struct resource rb532_wdt_res[] = {
 };
 
 static struct platform_device rb532_wdt = {
-	.name 		= "rc32434_wdt",
-	.id 		= -1,
-	.resource 	= rb532_wdt_res,
+	.name		= "rc32434_wdt",
+	.id		= -1,
+	.resource	= rb532_wdt_res,
 	.num_resources	= ARRAY_SIZE(rb532_wdt_res),
 };
 
 static struct plat_serial8250_port rb532_uart_res[] = {
 	{
+		.type           = PORT_16550A,
 		.membase	= (char *)KSEG1ADDR(REGBASE + UART0BASE),
 		.irq		= UART0_IRQ,
 		.regshift	= 2,
@@ -235,8 +236,8 @@ static struct plat_serial8250_port rb532_uart_res[] = {
 };
 
 static struct platform_device rb532_uart = {
-	.name              = "serial8250",
-	.id                = PLAT8250_DEV_PLATFORM,
+	.name		   = "serial8250",
+	.id		   = PLAT8250_DEV_PLATFORM,
 	.dev.platform_data = &rb532_uart_res,
 };
 
@@ -250,30 +251,8 @@ static struct platform_device *rb532_devs[] = {
 	&rb532_wdt
 };
 
-static void __init parse_mac_addr(char *macstr)
-{
-	int i, h, l;
-
-	for (i = 0; i < 6; i++) {
-		if (i != 5 && *(macstr + 2) != ':')
-			return;
-
-		h = hex_to_bin(*macstr++);
-		if (h == -1)
-			return;
-
-		l = hex_to_bin(*macstr++);
-		if (l == -1)
-			return;
-
-		macstr++;
-		korina_dev0_data.mac[i] = (h << 4) + l;
-	}
-}
-
-
 /* NAND definitions */
-#define NAND_CHIP_DELAY	25
+#define NAND_CHIP_DELAY 25
 
 static void __init rb532_nand_setup(void)
 {
@@ -333,7 +312,10 @@ static int __init plat_setup_devices(void)
 static int __init setup_kmac(char *s)
 {
 	printk(KERN_INFO "korina mac = %s\n", s);
-	parse_mac_addr(s);
+	if (!mac_pton(s, korina_dev0_data.mac)) {
+		printk(KERN_ERR "Invalid mac\n");
+		return -EINVAL;
+	}
 	return 0;
 }
 

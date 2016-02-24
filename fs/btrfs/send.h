@@ -17,7 +17,13 @@
  * Boston, MA 021110-1307, USA.
  */
 
+#ifndef CONFIG_BTRFS_ZADARA
 #include "ctree.h"
+#else /*CONFIG_BTRFS_ZADARA*/
+#ifdef __KERNEL__
+#include "ctree.h"
+#endif /*__KERNEL__*/
+#endif /*CONFIG_BTRFS_ZADARA*/
 
 #define BTRFS_SEND_STREAM_MAGIC "btrfs-stream"
 #define BTRFS_SEND_STREAM_VERSION 1
@@ -86,6 +92,12 @@ enum btrfs_send_cmd {
 	BTRFS_SEND_C_UTIMES,
 
 	BTRFS_SEND_C_END,
+	BTRFS_SEND_C_UPDATE_EXTENT,
+#ifdef CONFIG_BTRFS_ZADARA
+	/* community adds commands after BTRFS_SEND_C_END, let's hope they won't add too many */
+	BTRFS_SEND_C_ZWRITE_ALIGNED = BTRFS_SEND_C_END + 32,
+	BTRFS_SEND_C_ZUNMAP,
+#endif /*CONFIG_BTRFS_ZADARA*/
 	__BTRFS_SEND_C_MAX,
 };
 #define BTRFS_SEND_C_MAX (__BTRFS_SEND_C_MAX - 1)
@@ -124,11 +136,17 @@ enum {
 	BTRFS_SEND_A_CLONE_OFFSET,
 	BTRFS_SEND_A_CLONE_LEN,
 
+#ifdef CONFIG_BTRFS_ZADARA
+	BTRFS_SEND_A_DATA_SECTORS_FROM_RIGHT = BTRFS_SEND_A_CLONE_LEN + 32,
+#endif /*CONFIG_BTRFS_ZADARA*/
+
 	__BTRFS_SEND_A_MAX,
 };
 #define BTRFS_SEND_A_MAX (__BTRFS_SEND_A_MAX - 1)
 
 #ifdef __KERNEL__
 long btrfs_ioctl_send(struct file *mnt_file, void __user *arg);
-int write_buf(struct file *filp, const void *buf, u32 len, loff_t *off);
+#ifdef CONFIG_BTRFS_ZADARA
+long btrfs_ioctl_send_with_checkpoint(struct file *mnt_file, void __user *user_arg);
+#endif /*CONFIG_BTRFS_ZADARA*/
 #endif

@@ -2,7 +2,7 @@
  * linux/arch/mips/txx9/pci.c
  *
  * Based on linux/arch/mips/txx9/rbtx4927/setup.c,
- *          linux/arch/mips/txx9/rbtx4938/setup.c,
+ *	    linux/arch/mips/txx9/rbtx4938/setup.c,
  *	    and RBTX49xx patch from CELF patch archive.
  *
  * Copyright 2001-2005 MontaVista Software Inc.
@@ -107,7 +107,7 @@ int txx9_pci_mem_high __initdata;
 
 /*
  * allocate pci_controller and resources.
- * mem_base, io_base: physical address.  0 for auto assignment.
+ * mem_base, io_base: physical address.	 0 for auto assignment.
  * mem_size and io_size means max size on auto assignment.
  * pcic must be &txx9_primary_pcic or NULL.
  */
@@ -268,7 +268,7 @@ static int txx9_i8259_irq_setup(int irq)
 	return err;
 }
 
-static void quirk_slc90e66_bridge(struct pci_dev *dev)
+static void __init_refok quirk_slc90e66_bridge(struct pci_dev *dev)
 {
 	int irq;	/* PCI/ISA Bridge interrupt */
 	u8 reg_64;
@@ -331,7 +331,7 @@ static void quirk_slc90e66_ide(struct pci_dev *dev)
 	 * !!! DO NOT REMOVE THIS COMMENT IT IS REQUIRED BY SMSC !!!
 	 */
 	dat |= 0x01;
-	pci_write_config_byte(dev, regs[i], dat);
+	pci_write_config_byte(dev, 0x5c, dat);
 	pci_read_config_byte(dev, 0x5c, &dat);
 	printk(KERN_CONT " REG5C %02x", dat);
 	printk(KERN_CONT "\n");

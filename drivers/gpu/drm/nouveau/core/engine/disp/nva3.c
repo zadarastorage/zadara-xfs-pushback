@@ -25,42 +25,33 @@
 #include <engine/software.h>
 #include <engine/disp.h>
 
-#include <core/class.h>
+#include <nvif/class.h>
 
 #include "nv50.h"
 
+/*******************************************************************************
+ * Base display object
+ ******************************************************************************/
+
 static struct nouveau_oclass
 nva3_disp_sclass[] = {
-	{ NVA3_DISP_MAST_CLASS, &nv50_disp_mast_ofuncs },
-	{ NVA3_DISP_SYNC_CLASS, &nv50_disp_sync_ofuncs },
-	{ NVA3_DISP_OVLY_CLASS, &nv50_disp_ovly_ofuncs },
-	{ NVA3_DISP_OIMM_CLASS, &nv50_disp_oimm_ofuncs },
-	{ NVA3_DISP_CURS_CLASS, &nv50_disp_curs_ofuncs },
+	{ GT214_DISP_CORE_CHANNEL_DMA, &nv50_disp_mast_ofuncs.base },
+	{ GT214_DISP_BASE_CHANNEL_DMA, &nv50_disp_sync_ofuncs.base },
+	{ GT214_DISP_OVERLAY_CHANNEL_DMA, &nv50_disp_ovly_ofuncs.base },
+	{ GT214_DISP_OVERLAY, &nv50_disp_oimm_ofuncs.base },
+	{ GT214_DISP_CURSOR, &nv50_disp_curs_ofuncs.base },
 	{}
-};
-
-struct nouveau_omthds
-nva3_disp_base_omthds[] = {
-	{ SOR_MTHD(NV50_DISP_SOR_PWR)         , nv50_sor_mthd },
-	{ SOR_MTHD(NVA3_DISP_SOR_HDA_ELD)     , nv50_sor_mthd },
-	{ SOR_MTHD(NV84_DISP_SOR_HDMI_PWR)    , nv50_sor_mthd },
-	{ SOR_MTHD(NV50_DISP_SOR_LVDS_SCRIPT) , nv50_sor_mthd },
-	{ SOR_MTHD(NV94_DISP_SOR_DP_TRAIN)    , nv50_sor_mthd },
-	{ SOR_MTHD(NV94_DISP_SOR_DP_LNKCTL)   , nv50_sor_mthd },
-	{ SOR_MTHD(NV94_DISP_SOR_DP_DRVCTL(0)), nv50_sor_mthd },
-	{ SOR_MTHD(NV94_DISP_SOR_DP_DRVCTL(1)), nv50_sor_mthd },
-	{ SOR_MTHD(NV94_DISP_SOR_DP_DRVCTL(2)), nv50_sor_mthd },
-	{ SOR_MTHD(NV94_DISP_SOR_DP_DRVCTL(3)), nv50_sor_mthd },
-	{ DAC_MTHD(NV50_DISP_DAC_PWR)         , nv50_dac_mthd },
-	{ DAC_MTHD(NV50_DISP_DAC_LOAD)        , nv50_dac_mthd },
-	{},
 };
 
 static struct nouveau_oclass
 nva3_disp_base_oclass[] = {
-	{ NVA3_DISP_CLASS, &nv50_disp_base_ofuncs, nva3_disp_base_omthds },
+	{ GT214_DISP, &nv50_disp_base_ofuncs },
 	{}
 };
+
+/*******************************************************************************
+ * Display engine implementation
+ ******************************************************************************/
 
 static int
 nva3_disp_ctor(struct nouveau_object *parent, struct nouveau_object *engine,
@@ -70,42 +61,48 @@ nva3_disp_ctor(struct nouveau_object *parent, struct nouveau_object *engine,
 	struct nv50_disp_priv *priv;
 	int ret;
 
-	ret = nouveau_disp_create(parent, engine, oclass, "PDISP",
+	ret = nouveau_disp_create(parent, engine, oclass, 2, "PDISP",
 				  "display", &priv);
 	*pobject = nv_object(priv);
+	if (ret)
+		return ret;
+
+	ret = nvkm_event_init(&nv50_disp_chan_uevent, 1, 9, &priv->uevent);
 	if (ret)
 		return ret;
 
 	nv_engine(priv)->sclass = nva3_disp_base_oclass;
 	nv_engine(priv)->cclass = &nv50_disp_cclass;
 	nv_subdev(priv)->intr = nv50_disp_intr;
+	INIT_WORK(&priv->supervisor, nv50_disp_intr_supervisor);
 	priv->sclass = nva3_disp_sclass;
 	priv->head.nr = 2;
 	priv->dac.nr = 3;
 	priv->sor.nr = 4;
+	priv->pior.nr = 3;
 	priv->dac.power = nv50_dac_power;
 	priv->dac.sense = nv50_dac_sense;
 	priv->sor.power = nv50_sor_power;
 	priv->sor.hda_eld = nva3_hda_eld;
 	priv->sor.hdmi = nva3_hdmi_ctrl;
-	priv->sor.dp_train = nv94_sor_dp_train;
-	priv->sor.dp_train_init = nv94_sor_dp_train_init;
-	priv->sor.dp_train_fini = nv94_sor_dp_train_fini;
-	priv->sor.dp_lnkctl = nv94_sor_dp_lnkctl;
-	priv->sor.dp_drvctl = nv94_sor_dp_drvctl;
-
-	INIT_LIST_HEAD(&priv->base.vblank.list);
-	spin_lock_init(&priv->base.vblank.lock);
+	priv->pior.power = nv50_pior_power;
 	return 0;
 }
 
-struct nouveau_oclass
-nva3_disp_oclass = {
-	.handle = NV_ENGINE(DISP, 0x85),
-	.ofuncs = &(struct nouveau_ofuncs) {
+struct nouveau_oclass *
+nva3_disp_oclass = &(struct nv50_disp_impl) {
+	.base.base.handle = NV_ENGINE(DISP, 0x85),
+	.base.base.ofuncs = &(struct nouveau_ofuncs) {
 		.ctor = nva3_disp_ctor,
 		.dtor = _nouveau_disp_dtor,
 		.init = _nouveau_disp_init,
 		.fini = _nouveau_disp_fini,
 	},
-};
+	.base.vblank = &nv50_disp_vblank_func,
+	.base.outp =  nv94_disp_outp_sclass,
+	.mthd.core = &nv94_disp_mast_mthd_chan,
+	.mthd.base = &nv84_disp_sync_mthd_chan,
+	.mthd.ovly = &nv84_disp_ovly_mthd_chan,
+	.mthd.prev = 0x000004,
+	.head.scanoutpos = nv50_disp_base_scanoutpos,
+}.base.base;

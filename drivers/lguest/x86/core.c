@@ -47,6 +47,7 @@
 #include <asm/lguest.h>
 #include <asm/uaccess.h>
 #include <asm/i387.h>
+#include <asm/tlbflush.h>
 #include "../lg.h"
 
 static int cpu_had_pge;
@@ -59,14 +60,13 @@ static struct {
 /* Offset from where switcher.S was compiled to where we've copied it */
 static unsigned long switcher_offset(void)
 {
-	return SWITCHER_ADDR - (unsigned long)start_switcher_text;
+	return switcher_addr - (unsigned long)start_switcher_text;
 }
 
-/* This cpu's struct lguest_pages. */
+/* This cpu's struct lguest_pages (after the Switcher text page) */
 static struct lguest_pages *lguest_pages(unsigned int cpu)
 {
-	return &(((struct lguest_pages *)
-		  (SWITCHER_ADDR + SHARED_SWITCHER_PAGES*PAGE_SIZE))[cpu]);
+	return &(((struct lguest_pages *)(switcher_addr + PAGE_SIZE))[cpu]);
 }
 
 static DEFINE_PER_CPU(struct lg_cpu *, lg_last_cpu);
@@ -158,7 +158,7 @@ static void run_guest_once(struct lg_cpu *cpu, struct lguest_pages *pages)
 	 * stack, then the address of this call.  This stack layout happens to
 	 * exactly match the stack layout created by an interrupt...
 	 */
-	asm volatile("pushf; lcall *lguest_entry"
+	asm volatile("pushf; lcall *%4"
 		     /*
 		      * This is how we tell GCC that %eax ("a") and %ebx ("b")
 		      * are changed by this routine.  The "=" means output.
@@ -170,7 +170,9 @@ static void run_guest_once(struct lg_cpu *cpu, struct lguest_pages *pages)
 		      * physical address of the Guest's top-level page
 		      * directory.
 		      */
-		     : "0"(pages), "1"(__pa(cpu->lg->pgdirs[cpu->cpu_pgd].pgdir))
+		     : "0"(pages), 
+		       "1"(__pa(cpu->lg->pgdirs[cpu->cpu_pgd].pgdir)),
+		       "m"(lguest_entry)
 		     /*
 		      * We tell gcc that all these registers could change,
 		      * which means we don't have to save and restore them in
@@ -451,9 +453,9 @@ void lguest_arch_handle_trap(struct lg_cpu *cpu)
 static void adjust_pge(void *on)
 {
 	if (on)
-		write_cr4(read_cr4() | X86_CR4_PGE);
+		cr4_set_bits(X86_CR4_PGE);
 	else
-		write_cr4(read_cr4() & ~X86_CR4_PGE);
+		cr4_clear_bits(X86_CR4_PGE);
 }
 
 /*H:020
@@ -701,7 +703,7 @@ void lguest_arch_setup_regs(struct lg_cpu *cpu, unsigned long start)
 	 * interrupts are enabled.  We always leave interrupts enabled while
 	 * running the Guest.
 	 */
-	regs->eflags = X86_EFLAGS_IF | X86_EFLAGS_BIT1;
+	regs->eflags = X86_EFLAGS_IF | X86_EFLAGS_FIXED;
 
 	/*
 	 * The "Extended Instruction Pointer" register says where the Guest is

@@ -1,6 +1,8 @@
 #ifdef CONFIG_XFS_ZADARA
 #include "xfs.h"
 #include "xfs_sb.h"
+#include "xfs_ag.h"
+#include "xfs_trans_resv.h" 
 #include "xfs_mount.h"
 #include "xfs_alloc.h"
 #include "xfs_extent_busy.h"
@@ -44,6 +46,17 @@ void zxfs_error(xfs_mount_t *mp, int flags)
 		PRINT_FLAG(SHUTDOWN_REMOTE_REQ);
 		PRINT_FLAG(SHUTDOWN_DEVICE_REQ);
 
+		zxfs_control_poll_wake_up(zmp, POLLERR);
+	}
+}
+
+void zxfs_corruption_error(xfs_mount_t *mp)
+{
+	struct zxfs_mount *zmp = &mp->m_zxfs;
+
+	/* notify user-space if this is a first time we see it */
+	if (atomic_cmpxchg(&zmp->corruption_detected, 0, 1) == 0) {
+		ZXFS_WARN(1, "XFS(%s): CORRUPTION - notiyfing user-space", mp->m_fsname);
 		zxfs_control_poll_wake_up(zmp, POLLERR);
 	}
 }
@@ -111,10 +124,8 @@ void zxfs_mp_init(xfs_mount_t *mp)
 	ZXFSLOG(mp, Z_KINFO, "INIT");
 
 	atomic64_set(&zmp->shutdown_flags, 0);
+	atomic_set(&zmp->corruption_detected, 0);
 	atomic_set(&zmp->total_discard_ranges, 0);
-
-	zmp->kobj_in_use = 0;
-
 	atomic_set(&zmp->allow_resize, 1);
 
 	/* 

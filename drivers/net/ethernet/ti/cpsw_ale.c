@@ -25,8 +25,6 @@
 #include "cpsw_ale.h"
 
 #define BITMASK(bits)		(BIT(bits) - 1)
-#define ALE_ENTRY_BITS		68
-#define ALE_ENTRY_WORDS	DIV_ROUND_UP(ALE_ENTRY_BITS, 32)
 
 #define ALE_VERSION_MAJOR(rev)	((rev >> 8) & 0xff)
 #define ALE_VERSION_MINOR(rev)	(rev & 0xff)
@@ -148,7 +146,7 @@ static int cpsw_ale_write(struct cpsw_ale *ale, int idx, u32 *ale_entry)
 	return idx;
 }
 
-static int cpsw_ale_match_addr(struct cpsw_ale *ale, u8 *addr)
+int cpsw_ale_match_addr(struct cpsw_ale *ale, u8 *addr, u16 vid)
 {
 	u32 ale_entry[ALE_ENTRY_WORDS];
 	int type, idx;
@@ -160,8 +158,26 @@ static int cpsw_ale_match_addr(struct cpsw_ale *ale, u8 *addr)
 		type = cpsw_ale_get_entry_type(ale_entry);
 		if (type != ALE_TYPE_ADDR && type != ALE_TYPE_VLAN_ADDR)
 			continue;
+		if (cpsw_ale_get_vlan_id(ale_entry) != vid)
+			continue;
 		cpsw_ale_get_addr(ale_entry, entry_addr);
-		if (memcmp(entry_addr, addr, 6) == 0)
+		if (ether_addr_equal(entry_addr, addr))
+			return idx;
+	}
+	return -ENOENT;
+}
+
+int cpsw_ale_match_vlan(struct cpsw_ale *ale, u16 vid)
+{
+	u32 ale_entry[ALE_ENTRY_WORDS];
+	int type, idx;
+
+	for (idx = 0; idx < ale->params.ale_entries; idx++) {
+		cpsw_ale_read(ale, idx, ale_entry);
+		type = cpsw_ale_get_entry_type(ale_entry);
+		if (type != ALE_TYPE_VLAN)
+			continue;
+		if (cpsw_ale_get_vlan_id(ale_entry) == vid)
 			return idx;
 	}
 	return -ENOENT;
@@ -218,7 +234,7 @@ static void cpsw_ale_flush_mcast(struct cpsw_ale *ale, u32 *ale_entry,
 		cpsw_ale_set_entry_type(ale_entry, ALE_TYPE_FREE);
 }
 
-int cpsw_ale_flush_multicast(struct cpsw_ale *ale, int port_mask)
+int cpsw_ale_flush_multicast(struct cpsw_ale *ale, int port_mask, int vid)
 {
 	u32 ale_entry[ALE_ENTRY_WORDS];
 	int ret, idx;
@@ -227,6 +243,14 @@ int cpsw_ale_flush_multicast(struct cpsw_ale *ale, int port_mask)
 		cpsw_ale_read(ale, idx, ale_entry);
 		ret = cpsw_ale_get_entry_type(ale_entry);
 		if (ret != ALE_TYPE_ADDR && ret != ALE_TYPE_VLAN_ADDR)
+			continue;
+
+		/* if vid passed is -1 then remove all multicast entry from
+		 * the table irrespective of vlan id, if a valid vlan id is
+		 * passed then remove only multicast added to that vlan id.
+		 * if vlan id doesn't match then move on to next entry.
+		 */
+		if (vid != -1 && cpsw_ale_get_vlan_id(ale_entry) != vid)
 			continue;
 
 		if (cpsw_ale_get_mcast(ale_entry)) {
@@ -274,19 +298,32 @@ int cpsw_ale_flush(struct cpsw_ale *ale, int port_mask)
 	return 0;
 }
 
-int cpsw_ale_add_ucast(struct cpsw_ale *ale, u8 *addr, int port, int flags)
+static inline void cpsw_ale_set_vlan_entry_type(u32 *ale_entry,
+						int flags, u16 vid)
+{
+	if (flags & ALE_VLAN) {
+		cpsw_ale_set_entry_type(ale_entry, ALE_TYPE_VLAN_ADDR);
+		cpsw_ale_set_vlan_id(ale_entry, vid);
+	} else {
+		cpsw_ale_set_entry_type(ale_entry, ALE_TYPE_ADDR);
+	}
+}
+
+int cpsw_ale_add_ucast(struct cpsw_ale *ale, u8 *addr, int port,
+		       int flags, u16 vid)
 {
 	u32 ale_entry[ALE_ENTRY_WORDS] = {0, 0, 0};
 	int idx;
 
-	cpsw_ale_set_entry_type(ale_entry, ALE_TYPE_ADDR);
+	cpsw_ale_set_vlan_entry_type(ale_entry, flags, vid);
+
 	cpsw_ale_set_addr(ale_entry, addr);
 	cpsw_ale_set_ucast_type(ale_entry, ALE_UCAST_PERSISTANT);
 	cpsw_ale_set_secure(ale_entry, (flags & ALE_SECURE) ? 1 : 0);
 	cpsw_ale_set_blocked(ale_entry, (flags & ALE_BLOCKED) ? 1 : 0);
 	cpsw_ale_set_port_num(ale_entry, port);
 
-	idx = cpsw_ale_match_addr(ale, addr);
+	idx = cpsw_ale_match_addr(ale, addr, (flags & ALE_VLAN) ? vid : 0);
 	if (idx < 0)
 		idx = cpsw_ale_match_free(ale);
 	if (idx < 0)
@@ -298,12 +335,13 @@ int cpsw_ale_add_ucast(struct cpsw_ale *ale, u8 *addr, int port, int flags)
 	return 0;
 }
 
-int cpsw_ale_del_ucast(struct cpsw_ale *ale, u8 *addr, int port)
+int cpsw_ale_del_ucast(struct cpsw_ale *ale, u8 *addr, int port,
+		       int flags, u16 vid)
 {
 	u32 ale_entry[ALE_ENTRY_WORDS] = {0, 0, 0};
 	int idx;
 
-	idx = cpsw_ale_match_addr(ale, addr);
+	idx = cpsw_ale_match_addr(ale, addr, (flags & ALE_VLAN) ? vid : 0);
 	if (idx < 0)
 		return -ENOENT;
 
@@ -313,18 +351,19 @@ int cpsw_ale_del_ucast(struct cpsw_ale *ale, u8 *addr, int port)
 }
 
 int cpsw_ale_add_mcast(struct cpsw_ale *ale, u8 *addr, int port_mask,
-			int super, int mcast_state)
+		       int flags, u16 vid, int mcast_state)
 {
 	u32 ale_entry[ALE_ENTRY_WORDS] = {0, 0, 0};
 	int idx, mask;
 
-	idx = cpsw_ale_match_addr(ale, addr);
+	idx = cpsw_ale_match_addr(ale, addr, (flags & ALE_VLAN) ? vid : 0);
 	if (idx >= 0)
 		cpsw_ale_read(ale, idx, ale_entry);
 
-	cpsw_ale_set_entry_type(ale_entry, ALE_TYPE_ADDR);
+	cpsw_ale_set_vlan_entry_type(ale_entry, flags, vid);
+
 	cpsw_ale_set_addr(ale_entry, addr);
-	cpsw_ale_set_super(ale_entry, super);
+	cpsw_ale_set_super(ale_entry, (flags & ALE_BLOCKED) ? 1 : 0);
 	cpsw_ale_set_mcast_state(ale_entry, mcast_state);
 
 	mask = cpsw_ale_get_port_mask(ale_entry);
@@ -342,12 +381,13 @@ int cpsw_ale_add_mcast(struct cpsw_ale *ale, u8 *addr, int port_mask,
 	return 0;
 }
 
-int cpsw_ale_del_mcast(struct cpsw_ale *ale, u8 *addr, int port_mask)
+int cpsw_ale_del_mcast(struct cpsw_ale *ale, u8 *addr, int port_mask,
+		       int flags, u16 vid)
 {
 	u32 ale_entry[ALE_ENTRY_WORDS] = {0, 0, 0};
 	int idx;
 
-	idx = cpsw_ale_match_addr(ale, addr);
+	idx = cpsw_ale_match_addr(ale, addr, (flags & ALE_VLAN) ? vid : 0);
 	if (idx < 0)
 		return -EINVAL;
 
@@ -360,6 +400,84 @@ int cpsw_ale_del_mcast(struct cpsw_ale *ale, u8 *addr, int port_mask)
 
 	cpsw_ale_write(ale, idx, ale_entry);
 	return 0;
+}
+
+int cpsw_ale_add_vlan(struct cpsw_ale *ale, u16 vid, int port, int untag,
+		      int reg_mcast, int unreg_mcast)
+{
+	u32 ale_entry[ALE_ENTRY_WORDS] = {0, 0, 0};
+	int idx;
+
+	idx = cpsw_ale_match_vlan(ale, vid);
+	if (idx >= 0)
+		cpsw_ale_read(ale, idx, ale_entry);
+
+	cpsw_ale_set_entry_type(ale_entry, ALE_TYPE_VLAN);
+	cpsw_ale_set_vlan_id(ale_entry, vid);
+
+	cpsw_ale_set_vlan_untag_force(ale_entry, untag);
+	cpsw_ale_set_vlan_reg_mcast(ale_entry, reg_mcast);
+	cpsw_ale_set_vlan_unreg_mcast(ale_entry, unreg_mcast);
+	cpsw_ale_set_vlan_member_list(ale_entry, port);
+
+	if (idx < 0)
+		idx = cpsw_ale_match_free(ale);
+	if (idx < 0)
+		idx = cpsw_ale_find_ageable(ale);
+	if (idx < 0)
+		return -ENOMEM;
+
+	cpsw_ale_write(ale, idx, ale_entry);
+	return 0;
+}
+
+int cpsw_ale_del_vlan(struct cpsw_ale *ale, u16 vid, int port_mask)
+{
+	u32 ale_entry[ALE_ENTRY_WORDS] = {0, 0, 0};
+	int idx;
+
+	idx = cpsw_ale_match_vlan(ale, vid);
+	if (idx < 0)
+		return -ENOENT;
+
+	cpsw_ale_read(ale, idx, ale_entry);
+
+	if (port_mask)
+		cpsw_ale_set_vlan_member_list(ale_entry, port_mask);
+	else
+		cpsw_ale_set_entry_type(ale_entry, ALE_TYPE_FREE);
+
+	cpsw_ale_write(ale, idx, ale_entry);
+	return 0;
+}
+
+void cpsw_ale_set_allmulti(struct cpsw_ale *ale, int allmulti)
+{
+	u32 ale_entry[ALE_ENTRY_WORDS];
+	int type, idx;
+	int unreg_mcast = 0;
+
+	/* Only bother doing the work if the setting is actually changing */
+	if (ale->allmulti == allmulti)
+		return;
+
+	/* Remember the new setting to check against next time */
+	ale->allmulti = allmulti;
+
+	for (idx = 0; idx < ale->params.ale_entries; idx++) {
+		cpsw_ale_read(ale, idx, ale_entry);
+		type = cpsw_ale_get_entry_type(ale_entry);
+		if (type != ALE_TYPE_VLAN)
+			continue;
+
+		unreg_mcast = cpsw_ale_get_vlan_unreg_mcast(ale_entry);
+		if (allmulti)
+			unreg_mcast |= 1;
+		else
+			unreg_mcast &= ~1;
+		cpsw_ale_set_vlan_unreg_mcast(ale_entry, unreg_mcast);
+		cpsw_ale_write(ale, idx, ale_entry);
+	}
 }
 
 struct ale_control_info {
@@ -391,6 +509,14 @@ static const struct ale_control_info ale_controls[ALE_NUM_CONTROLS] = {
 		.offset		= ALE_CONTROL,
 		.port_offset	= 0,
 		.shift		= 29,
+		.port_shift	= 0,
+		.bits		= 1,
+	},
+	[ALE_P0_UNI_FLOOD]	= {
+		.name		= "port0_unicast_flood",
+		.offset		= ALE_CONTROL,
+		.port_offset	= 0,
+		.shift		= 8,
 		.port_shift	= 0,
 		.bits		= 1,
 	},
@@ -487,6 +613,14 @@ static const struct ale_control_info ale_controls[ALE_NUM_CONTROLS] = {
 		.offset		= ALE_PORTCTL,
 		.port_offset	= 4,
 		.shift		= 4,
+		.port_shift	= 0,
+		.bits		= 1,
+	},
+	[ALE_PORT_NO_SA_UPDATE]	= {
+		.name		= "no_source_update",
+		.offset		= ALE_PORTCTL,
+		.port_offset	= 4,
+		.shift		= 5,
 		.port_shift	= 0,
 		.bits		= 1,
 	},
@@ -659,8 +793,17 @@ int cpsw_ale_destroy(struct cpsw_ale *ale)
 {
 	if (!ale)
 		return -EINVAL;
-	cpsw_ale_stop(ale);
 	cpsw_ale_control_set(ale, 0, ALE_ENABLE, 0);
 	kfree(ale);
 	return 0;
+}
+
+void cpsw_ale_dump(struct cpsw_ale *ale, u32 *data)
+{
+	int i;
+
+	for (i = 0; i < ale->params.ale_entries; i++) {
+		cpsw_ale_read(ale, i, data);
+		data += ALE_ENTRY_WORDS;
+	}
 }

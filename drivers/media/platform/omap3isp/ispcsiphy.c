@@ -12,16 +12,6 @@
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
- * 02110-1301 USA
  */
 
 #include <linux/delay.h>
@@ -32,7 +22,8 @@
 #include "ispreg.h"
 #include "ispcsiphy.h"
 
-static void csiphy_routing_cfg_3630(struct isp_csiphy *phy, u32 iface,
+static void csiphy_routing_cfg_3630(struct isp_csiphy *phy,
+				    enum isp_interface_type iface,
 				    bool ccp2_strobe)
 {
 	u32 reg = isp_reg_readl(
@@ -40,6 +31,8 @@ static void csiphy_routing_cfg_3630(struct isp_csiphy *phy, u32 iface,
 	u32 shift, mode;
 
 	switch (iface) {
+	default:
+	/* Should not happen in practice, but let's keep the compiler happy. */
 	case ISP_INTERFACE_CCP2B_PHY1:
 		reg &= ~OMAP3630_CONTROL_CAMERA_PHY_CTRL_CSI1_RX_SEL_PHY2;
 		shift = OMAP3630_CONTROL_CAMERA_PHY_CTRL_CAMMODE_PHY1_SHIFT;
@@ -59,9 +52,8 @@ static void csiphy_routing_cfg_3630(struct isp_csiphy *phy, u32 iface,
 	}
 
 	/* Select data/clock or data/strobe mode for CCP2 */
-	switch (iface) {
-	case ISP_INTERFACE_CCP2B_PHY1:
-	case ISP_INTERFACE_CCP2B_PHY2:
+	if (iface == ISP_INTERFACE_CCP2B_PHY1 ||
+	    iface == ISP_INTERFACE_CCP2B_PHY2) {
 		if (ccp2_strobe)
 			mode = OMAP3630_CONTROL_CAMERA_PHY_CTRL_CAMMODE_CCP2_DATA_STROBE;
 		else
@@ -110,7 +102,8 @@ static void csiphy_routing_cfg_3430(struct isp_csiphy *phy, u32 iface, bool on,
  * and 3630, so they will not hold their contents in off-mode. This isn't an
  * issue since the MPU power domain is forced on whilst the ISP is in use.
  */
-static void csiphy_routing_cfg(struct isp_csiphy *phy, u32 iface, bool on,
+static void csiphy_routing_cfg(struct isp_csiphy *phy,
+			       enum isp_interface_type iface, bool on,
 			       bool ccp2_strobe)
 {
 	if (phy->isp->mmio_base[OMAP3_ISP_IOMEM_3630_CONTROL_CAMERA_PHY_CTRL]

@@ -1,25 +1,823 @@
 /*
  * QLogic Fibre Channel HBA Driver
- * Copyright (c)  2003-2012 QLogic Corporation
+ * Copyright (c)  2003-2014 QLogic Corporation
  *
  * See LICENSE.qla2xxx for copyright and licensing details.
  */
 #include "qla_def.h"
-#include "qla_target.h"
 
 #include <linux/kthread.h>
 #include <linux/vmalloc.h>
-#include <linux/slab.h>
 #include <linux/delay.h>
+#include <linux/version.h>
+
+#include "qla2x_tgt.h"
+#include <linux/ctype.h>
 
 static int qla24xx_vport_disable(struct fc_vport *, bool);
 
 /* SYSFS attributes --------------------------------------------------------- */
 
+#ifdef CONFIG_SCSI_QLA2XXX_TARGET
 static ssize_t
-qla2x00_sysfs_read_fw_dump(struct file *filp, struct kobject *kobj,
-			   struct bin_attribute *bin_attr,
-			   char *buf, loff_t off, size_t count)
+qla2x00_show_class2_enabled(struct device *dev,
+	struct device_attribute *attr, char *buffer)
+{
+	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
+	ulong max_size = PAGE_SIZE;
+	ulong size;
+
+	size = scnprintf(buffer, max_size, "%d\n",
+	    vha->hw->ha_tgt.enable_class_2);
+
+	return size;
+}
+
+static ssize_t
+qla2x00_store_class2_enabled(struct device *dev,
+	struct device_attribute *attr, const char *buffer, size_t size)
+{
+	struct scsi_qla_host *vha = shost_priv(class_to_shost(dev));
+	struct qla_hw_data *ha = vha->hw;
+	int reset = 0;
+	unsigned long flags;
+
+	if (buffer == NULL)
+		goto out;
+
+	spin_lock_irqsave(&ha->hardware_lock, flags);
+
+	switch (buffer[0]) {
+	case '0':
+		if (ha->ha_tgt.enable_class_2) {
+			ha->ha_tgt.enable_class_2 = 0;
+			reset = 1;
+		}
+		break;
+	case '1':
+		if (!ha->ha_tgt.enable_class_2) {
+			if (ha->fw_attributes & __constant_cpu_to_le32(BIT_0)) {
+				printk(KERN_INFO "(%ld): Enabling class 2 "
+					"operations.\n", vha->host_no);
+				ha->ha_tgt.enable_class_2 = 1;
+				reset = 1;
+			} else {
+				printk(KERN_INFO "Firmware doesn't "
+					"support class 2 operations.\n");
+				goto out_unlock;
+			}
+		}
+		break;
+	default:
+		printk(KERN_ERR "%s(%ld): Requested action not understood: "
+			"%s\n", __func__, vha->host_no, buffer);
+		goto out_unlock;
+	}
+
+	spin_unlock_irqrestore(&ha->hardware_lock, flags);
+
+	if (reset)
+		set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
+
+out:
+	return size;
+
+out_unlock:
+	spin_unlock_irqrestore(&ha->hardware_lock, flags);
+	goto out;
+}
+
+static DEVICE_ATTR(class2_enabled,
+		   S_IRUGO|S_IWUSR,
+		   qla2x00_show_class2_enabled,
+		   qla2x00_store_class2_enabled);
+
+
+#ifdef CONFIG_SCST_PROC
+
+static ssize_t
+qla2x00_show_tgt_enabled(struct device *dev,
+	struct device_attribute *attr, char *buffer)
+{
+	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
+	ssize_t size;
+
+	size = scnprintf(buffer, PAGE_SIZE, "%d\n", qla_tgt_mode_enabled(vha));
+
+	return size;
+}
+
+static ssize_t
+qla2x00_store_tgt_enabled(struct device *dev,
+	struct device_attribute *attr, const char *buffer, size_t size)
+{
+	struct scsi_qla_host *vha = shost_priv(class_to_shost(dev));
+	int res = size;
+
+	if ((buffer == NULL) || (size == 0))
+		goto out;
+
+	if (qla_target.tgt_host_action == NULL) {
+		printk(KERN_INFO "%s: not acting for lack of target "
+			"driver\n", __func__);
+		res = -EINVAL;
+		goto out;
+	}
+
+	switch (buffer[0]) {
+	case '0':
+		res = qla_target.tgt_host_action(vha, DISABLE_TARGET_MODE);
+		break;
+	case '1':
+		res = qla_target.tgt_host_action(vha, ENABLE_TARGET_MODE);
+		break;
+	default:
+		printk(KERN_ERR "%s(%ld): Requested action not "
+			"understood: %s\n", __func__, vha->host_no, buffer);
+		res = -EINVAL;
+		goto out;
+	}
+
+	if (res == 0)
+		res = size;
+
+	if ((size > 1) && (buffer[1] == 'r'))
+		set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
+
+out:
+	return res;
+}
+
+static DEVICE_ATTR(target_mode_enabled,
+		   S_IRUGO|S_IWUSR,
+		   qla2x00_show_tgt_enabled,
+		   qla2x00_store_tgt_enabled);
+
+static ssize_t
+qla2x00_show_expl_conf_enabled(struct device *dev,
+	struct device_attribute *attr, char *buffer)
+{
+	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
+	ulong max_size = PAGE_SIZE;
+	ulong size;
+
+	size = scnprintf(buffer, max_size, "%d\n", vha->enable_explicit_conf);
+
+	return size;
+}
+
+static ssize_t
+qla2x00_store_expl_conf_enabled(struct device *dev,
+	struct device_attribute *attr, const char *buffer, size_t size)
+{
+	struct scsi_qla_host *ha = shost_priv(class_to_shost(dev));
+	unsigned long flags;
+
+	if (buffer == NULL)
+		return size;
+
+	spin_lock_irqsave(&ha->hardware_lock, flags);
+
+	switch (buffer[0]) {
+	case '0':
+		ha->enable_explicit_conf = 0;
+		printk(KERN_INFO "qla2xxx(%ld): explicit conformation "
+			"disabled\n", ha->instance);
+		break;
+	case '1':
+		ha->enable_explicit_conf = 1;
+		printk(KERN_INFO "qla2xxx(%ld): explicit conformation "
+			"enabled\n", ha->instance);
+		break;
+	default:
+		printk(KERN_ERR "%s(%ld): Requested action not understood: "
+			"%s\n", __func__, vha->host_no, buffer);
+		break;
+	}
+
+	spin_unlock_irqrestore(&ha->hardware_lock, flags);
+
+	return size;
+}
+
+static DEVICE_ATTR(explicit_conform_enabled,
+		   S_IRUGO|S_IWUSR,
+		   qla2x00_show_expl_conf_enabled,
+		   qla2x00_store_expl_conf_enabled);
+
+#endif /* CONFIG_SCST_PROC */
+
+static ssize_t
+qla2x00_show_ini_mode_force_reverse(struct device *dev,
+	struct device_attribute *attr, char *buffer)
+{
+	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
+	ulong max_size = PAGE_SIZE;
+	ulong size;
+
+	size = scnprintf(buffer, max_size, "%x\n",
+	    vha->hw->ha_tgt.ini_mode_force_reverse);
+
+	return size;
+}
+
+static ssize_t
+qla2x00_store_ini_mode_force_reverse(struct device *dev,
+	struct device_attribute *attr, const char *buffer, size_t size)
+{
+	struct scsi_qla_host *vha = shost_priv(class_to_shost(dev));
+	struct qla_hw_data *ha = vha->hw;
+	unsigned long flags;
+
+	if (buffer == NULL)
+		return size;
+
+	spin_lock_irqsave(&ha->hardware_lock, flags);
+
+	switch (buffer[0]) {
+	case '0':
+		if (!ha->ha_tgt.ini_mode_force_reverse)
+			goto out_unlock;
+		ha->ha_tgt.ini_mode_force_reverse = 0;
+		printk(KERN_INFO "qla2xxx(%ld): initiator mode force "
+			"reverse disabled\n", vha->host_no);
+		qla_reverse_ini_mode(vha);
+		break;
+	case '1':
+		if (ha->ha_tgt.ini_mode_force_reverse)
+			goto out_unlock;
+		ha->ha_tgt.ini_mode_force_reverse = 1;
+		printk(KERN_INFO "qla2xxx(%ld): initiator mode force "
+			"reverse enabled\n", vha->host_no);
+		qla_reverse_ini_mode(vha);
+		break;
+	default:
+		printk(KERN_ERR "%s(%ld): Requested action not understood: "
+			"%s\n", __func__, vha->host_no, buffer);
+		break;
+	}
+
+	spin_unlock_irqrestore(&ha->hardware_lock, flags);
+
+	set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
+	qla2xxx_wake_dpc(vha);
+	qla2x00_wait_for_hba_online(vha);
+
+out:
+	return size;
+
+out_unlock:
+	spin_unlock_irqrestore(&ha->hardware_lock, flags);
+	goto out;
+}
+
+static DEVICE_ATTR(ini_mode_force_reverse,
+		   S_IRUGO|S_IWUSR,
+		   qla2x00_show_ini_mode_force_reverse,
+		   qla2x00_store_ini_mode_force_reverse);
+
+static ssize_t
+qla2x00_show_resource_counts(struct device *dev,
+	struct device_attribute *attr, char *buffer)
+{
+	scsi_qla_host_t *ha = shost_priv(class_to_shost(dev));
+	ulong max_size = PAGE_SIZE;
+	ulong size;
+	mbx_cmd_t mc;
+	int rval;
+
+	mc.mb[0] = MBC_GET_RESOURCE_COUNTS;
+	mc.out_mb = MBX_0;
+	mc.in_mb = MBX_0|MBX_1|MBX_2|MBX_3|MBX_6|MBX_7|MBX_10|MBX_11|MBX_12;
+	mc.tov = 30;
+	mc.flags = 0;
+
+	rval = qla2x00_mailbox_command(ha, &mc);
+
+	if (rval != QLA_SUCCESS) {
+		size = scnprintf(buffer, max_size,
+			"Mailbox Command failed %d, mb %#x",
+			rval, mc.mb[0]);
+	} else {
+		size = scnprintf(buffer, max_size,
+			"Orig TGT exchg cnt[%d]\n"
+			"Cur TGT exchg cnt[%d]\n"
+			"Cur Init exchg cnt[%d]\n"
+			"Orig Init exchg cnt[%d]\n"
+			"Cur IOCB [%d]\n"
+			"Orig IOCB [%d]\n"
+			"VPs[%d] FCF[%d] \n",
+			mc.mb[1], mc.mb[2],mc.mb[3],
+			mc.mb[6], mc.mb[7],mc.mb[10],
+			mc.mb[11], mc.mb[12]);
+	}
+
+	return size;
+}
+
+static DEVICE_ATTR(resource_counts,
+		   S_IRUGO,
+		   qla2x00_show_resource_counts,
+		   NULL);
+
+static ssize_t
+qla2x00_show_port_database(struct device *dev,
+	struct device_attribute *attr, char *buffer)
+{
+	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
+	struct qla_hw_data *ha = vha->hw;
+	ulong max_size = PAGE_SIZE;
+	ulong size = 0;
+	int rval, i;
+	uint16_t entries;
+	void *pmap;
+	int pmap_len, iter;
+
+	for (iter = 0; iter < 2; iter++) {
+		if (iter != 0)
+			size += scnprintf(buffer+size, max_size-size, "\n");
+
+		rval = qla2x00_get_node_name_list(vha, (iter == 0), &pmap, &pmap_len);
+	if (rval != QLA_SUCCESS) {
+		size = scnprintf(buffer, max_size,
+				"qla2x00_get_node_name_list() failed %d\n",
+				rval);
+		goto next;
+	}
+
+	size += scnprintf(buffer+size, max_size-size,
+				"Port Name List returned %d bytes%s\nL_ID WWPN\n",
+				pmap_len, (iter == 0) ? "" : " (no initiators)");
+
+	if (IS_FWI2_CAPABLE(ha)) {
+		struct qla_port24_data *pmap24 = pmap;
+
+		entries = pmap_len/sizeof(*pmap24);
+
+		for (i = 0; (i < entries) && (size < max_size); ++i) {
+			uint64_t *wwn = (uint64_t *)pmap24[i].port_name;
+			if (*wwn == 0)
+				continue;
+			size += scnprintf(buffer+size, max_size-size,
+					 "%04x %02x%02x%02x%02x%02x%02x%02x%02x\n",
+					 le16_to_cpu(pmap24[i].loop_id),
+					 pmap24[i].port_name[7],
+					 pmap24[i].port_name[6],
+					 pmap24[i].port_name[5],
+					 pmap24[i].port_name[4],
+					 pmap24[i].port_name[3],
+					 pmap24[i].port_name[2],
+					 pmap24[i].port_name[1],
+					 pmap24[i].port_name[0]);
+		}
+	} else {
+		struct qla_port23_data *pmap2x = pmap;
+
+		entries = pmap_len/sizeof(*pmap2x);
+
+		for (i = 0; (i < entries) && (size < max_size); ++i) {
+			size += scnprintf(buffer+size, max_size-size,
+					 "%04x %02x%02x%02x%02x%02x%02x%02x%02x\n",
+					 le16_to_cpu(pmap2x[i].loop_id),
+					 pmap2x[i].port_name[7],
+					 pmap2x[i].port_name[6],
+					 pmap2x[i].port_name[5],
+					 pmap2x[i].port_name[4],
+					 pmap2x[i].port_name[3],
+					 pmap2x[i].port_name[2],
+					 pmap2x[i].port_name[1],
+					 pmap2x[i].port_name[0]);
+		}
+	}
+
+	kfree(pmap);
+	}
+
+next:
+	if (size < max_size) {
+		dma_addr_t gid_list_dma;
+		struct gid_list_info *gid_list;
+		char *id_iter;
+		struct gid_list_info *gid;
+
+		gid_list = dma_alloc_coherent(&ha->pdev->dev,
+		    qla2x00_gid_list_size(ha), &gid_list_dma, GFP_KERNEL);
+		if (gid_list == NULL) {
+			size += scnprintf(buffer+size, max_size-size,
+					"Unable to allocate gid_list");
+			goto out_id_list_failed;
+		}
+
+		/* Get list of logged in devices. */
+		rval = qla2x00_get_id_list(vha, gid_list, gid_list_dma,
+						&entries);
+		if (rval != QLA_SUCCESS) {
+			size += scnprintf(buffer+size, max_size-size,
+					"qla2x00_get_id_list failed: %d",
+					rval);
+			goto out_free_id_list;
+		}
+
+		size += scnprintf(buffer+size, max_size-size,
+				 "\nGet ID List (0x007C) returned %d entries\n"
+				 "L_ID PortID\n",
+				 entries);
+
+		id_iter = (char *)gid_list;
+		for (i = 0; (i < entries) && (size < max_size); ++i) {
+			gid = (struct gid_list_info *)id_iter;
+			if (IS_QLA2100(ha) || IS_QLA2200(ha)) {
+				size += scnprintf(buffer+size, max_size-size,
+						 "%02x %02x%02x%02x\n",
+						 gid->loop_id_2100,
+						 gid->domain,
+						 gid->area,
+						 gid->al_pa);
+
+			} else {
+				size += scnprintf(buffer+size, max_size-size,
+						 "%04x %02x%02x%02x\n",
+						 le16_to_cpu(gid->loop_id),
+						 gid->domain,
+						 gid->area,
+						 gid->al_pa);
+
+			}
+			id_iter += ha->gid_list_info_size;
+		}
+out_free_id_list:
+		dma_free_coherent(&ha->pdev->dev, qla2x00_gid_list_size(ha),
+		    gid_list, gid_list_dma);
+	}
+
+out_id_list_failed:
+	if (size < max_size) {
+		fc_port_t *fcport;
+		char *state;
+		char port_type[] = "URSBIT";
+
+		size += scnprintf(buffer+size, max_size-size,
+				 "\nfc_ports database\n");
+
+		list_for_each_entry_rcu(fcport, &vha->vp_fcports, list) {
+			if (size >= max_size)
+				goto out;
+			switch (atomic_read(&fcport->state)) {
+			case FCS_UNCONFIGURED : state = "Unconfigured"; break;
+			case FCS_DEVICE_DEAD : state = "Dead"; break;
+			case FCS_DEVICE_LOST : state = "Lost"; break;
+			case FCS_ONLINE	: state = "Online"; break;
+			default: state = "Unknown"; break;
+			}
+
+			size += scnprintf(buffer+size, max_size-size,
+					 "%04x %02x%02x%02x "
+					 "%02x%02x%02x%02x%02x%02x%02x%02x "
+					 "%c %s\n",
+					 fcport->loop_id,
+					 fcport->d_id.b.domain,
+					 fcport->d_id.b.area,
+					 fcport->d_id.b.al_pa,
+					 fcport->port_name[0], fcport->port_name[1],
+					 fcport->port_name[2], fcport->port_name[3],
+					 fcport->port_name[4], fcport->port_name[5],
+					 fcport->port_name[6], fcport->port_name[7],
+					 port_type[fcport->port_type], state);
+		}
+	}
+out:
+	return size;
+}
+
+static ssize_t
+qla2x00_update_portdb(struct device *dev,
+	struct device_attribute *attr, const char *buffer, size_t size)
+{
+	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
+
+	if ((buffer == NULL) || (size == 0))
+		goto out;
+
+	switch (buffer[0]) {
+	case '2':
+		printk(KERN_INFO "Reconfiguring loop on %ld\n",
+			vha->host_no);
+		qla2x00_configure_loop(vha);
+		break;
+
+	case 'l':
+	case 'L':
+		printk(KERN_INFO "Reconfiguring local loop on %ld\n",
+			vha->host_no);
+		qla2x00_configure_local_loop(vha);
+		break;
+
+	case 'f':
+	case 'F':
+		printk(KERN_INFO "Reconfiguring fabric on %ld\n",
+			vha->host_no);
+		qla2x00_configure_fabric(vha);
+		/* fall through */
+
+	default:
+		printk(KERN_INFO "Resyncing loop on %ld\n",
+			vha->host_no);
+		set_bit(LOOP_RESYNC_NEEDED, &vha->dpc_flags);
+		break;
+	}
+
+out:
+	return size;
+}
+
+
+static DEVICE_ATTR(port_database,
+		   S_IRUGO|S_IWUSR,
+		   qla2x00_show_port_database,
+		   qla2x00_update_portdb);
+
+#endif /* CONFIG_SCSI_QLA2XXX_TARGET */
+
+/* laser */
+
+static inline void
+qla2x00_drive_gpio(scsi_qla_host_t *vha)
+{
+	struct qla_hw_data *ha = vha->hw;
+	/* Take control of GPIO register. */
+	ha->fw_options[1] &= ~FO1_SET_EMPHASIS_SWING;
+	ha->fw_options[1] |= FO1_DISABLE_GPIO6_7;
+	qla2x00_set_fw_options(vha, ha->fw_options);
+}
+
+static inline void
+qla2x00_relinquish_gpio(scsi_qla_host_t *vha)
+{
+	struct qla_hw_data *ha = vha->hw;
+	/* Restore control of GPIO register. */
+	ha->fw_options[1] &= ~FO1_SET_EMPHASIS_SWING;
+	ha->fw_options[1] &= ~FO1_DISABLE_GPIO6_7;
+	qla2x00_set_fw_options(vha, ha->fw_options);
+}
+
+static void
+qla2x00_disable_laser(scsi_qla_host_t *vha)
+{
+	unsigned long flags;
+	uint16_t gpio_data;
+	struct qla_hw_data *ha = vha->hw;
+	struct device_reg_2xxx __iomem *reg = &ha->iobase->isp;
+
+	qla2x00_drive_gpio(vha);
+
+	spin_lock_irqsave(&ha->hardware_lock, flags);
+
+	/* Prepare GPIO enable mask. */
+	gpio_data = RD_REG_DWORD(&reg->gpioe);
+	gpio_data |= GPIO_LASER_MASK | GPIO_LASER_DISABLE;
+	WRT_REG_WORD(&reg->gpioe, gpio_data);
+	RD_REG_WORD(&reg->gpioe);
+	/* Drive GPIO laser pin -- low. */
+	gpio_data = RD_REG_WORD(&reg->gpiod);
+	gpio_data |= GPIO_LASER_MASK | GPIO_LASER_DISABLE;
+	WRT_REG_WORD(&reg->gpiod, gpio_data);
+	RD_REG_WORD(&reg->gpiod);
+
+	spin_unlock_irqrestore(&ha->hardware_lock, flags);
+
+	qla2x00_relinquish_gpio(vha);
+}
+
+static void
+qla2x00_enable_laser(scsi_qla_host_t *vha)
+{
+	unsigned long flags;
+	uint16_t gpio_data;
+	struct qla_hw_data *ha = vha->hw;
+	struct device_reg_2xxx __iomem *reg = &ha->iobase->isp;
+
+	qla2x00_drive_gpio(vha);
+
+	spin_lock_irqsave(&ha->hardware_lock, flags);
+
+	/* Prepare GPIO enable mask. */
+	gpio_data = RD_REG_DWORD(&reg->gpioe);
+	gpio_data |= GPIO_LASER_MASK | GPIO_LASER_DISABLE;
+	WRT_REG_WORD(&reg->gpioe, gpio_data);
+	RD_REG_WORD(&reg->gpioe);
+	/* Drive GPIO laser pin -- high. */
+	gpio_data = RD_REG_WORD(&reg->gpiod);
+	gpio_data |= GPIO_LASER_MASK;
+	gpio_data &= ~GPIO_LASER_DISABLE;
+	WRT_REG_WORD(&reg->gpiod, gpio_data);
+	RD_REG_WORD(&reg->gpiod);
+
+	spin_unlock_irqrestore(&ha->hardware_lock, flags);
+
+	qla2x00_relinquish_gpio(vha);
+}
+
+static inline void
+qla24xx_drive_gpio(scsi_qla_host_t *vha)
+{
+	struct qla_hw_data *ha = vha->hw;
+	/* Take control of GPIO register. */
+	ha->fw_options[1] |= ADD_FO1_DISABLE_GPIO_LED_CTRL;
+	qla2x00_set_fw_options(vha, ha->fw_options);
+	qla2x00_get_fw_options(vha, ha->fw_options);
+}
+
+static inline void
+qla24xx_relinquish_gpio(scsi_qla_host_t *vha)
+{
+	struct qla_hw_data *ha = vha->hw;
+	/* Restore control of GPIO register. */
+	ha->fw_options[1] &= ~ADD_FO1_DISABLE_GPIO_LED_CTRL;
+	qla2x00_set_fw_options(vha, ha->fw_options);
+	qla2x00_get_fw_options(vha, ha->fw_options);
+}
+
+static void
+qla24xx_disable_laser(scsi_qla_host_t *vha)
+{
+	unsigned long flags;
+	uint32_t gpio_data;
+	struct qla_hw_data *ha = vha->hw;
+	struct device_reg_24xx __iomem *reg = &ha->iobase->isp24;
+
+	qla24xx_drive_gpio(vha);
+
+	spin_lock_irqsave(&ha->hardware_lock, flags);
+
+	/* Prepare GPIO enable mask. */
+	gpio_data = RD_REG_DWORD(&reg->gpioe);
+	gpio_data |= GPDX_LASER_MASK | GPDX_LASER_DISABLE;
+	WRT_REG_DWORD(&reg->gpioe, gpio_data);
+	RD_REG_DWORD(&reg->gpioe);
+	/* Drive GPIO laser pin -- low. */
+	gpio_data = RD_REG_DWORD(&reg->gpiod);
+	gpio_data |= GPDX_LASER_MASK | GPDX_LASER_DISABLE;
+	WRT_REG_DWORD(&reg->gpiod, gpio_data);
+	RD_REG_DWORD(&reg->gpiod);
+
+	spin_unlock_irqrestore(&ha->hardware_lock, flags);
+
+	qla24xx_relinquish_gpio(vha);
+}
+
+static void
+qla24xx_enable_laser(scsi_qla_host_t *vha)
+{
+	unsigned long flags;
+	uint32_t gpio_data;
+	struct qla_hw_data *ha = vha->hw;
+	struct device_reg_24xx __iomem *reg = &ha->iobase->isp24;
+
+	qla24xx_drive_gpio(vha);
+
+	spin_lock_irqsave(&ha->hardware_lock, flags);
+
+	/* Prepare GPIO enable mask. */
+	gpio_data = RD_REG_DWORD(&reg->gpioe);
+	gpio_data |= GPDX_LASER_MASK | GPDX_LASER_DISABLE;
+	WRT_REG_DWORD(&reg->gpioe, gpio_data);
+	RD_REG_DWORD(&reg->gpioe);
+	/* Drive GPIO laser pin -- high. */
+	gpio_data = RD_REG_DWORD(&reg->gpiod);
+	gpio_data |= GPDX_LASER_MASK;
+	gpio_data &= ~GPDX_LASER_DISABLE;
+	WRT_REG_DWORD(&reg->gpiod, gpio_data);
+	RD_REG_DWORD(&reg->gpiod);
+
+	spin_unlock_irqrestore(&ha->hardware_lock, flags);
+
+	qla24xx_relinquish_gpio(vha);
+}
+
+#define PORT_0_2031 0x00201340
+#define PORT_1_2031 0x00201350
+#define LASER_ON_2031  0x01800100
+#define LASER_OFF_2031 0x01800180
+
+static void
+qla2031_laser_ctrl(scsi_qla_host_t *vha, char disable)
+{
+	uint32_t reg, data, fn;
+	struct qla_hw_data *ha = vha->hw;
+	struct device_reg_24xx __iomem *isp_reg = &ha->iobase->isp24;
+
+	/* pci func #/port # */
+	fn = (RD_REG_DWORD(&isp_reg->ctrl_status) &
+		(BIT_15|BIT_14|BIT_13|BIT_12));
+
+	fn = (fn >> 12);
+
+	if (fn & 1)
+		reg = PORT_1_2031;
+	else
+		reg = PORT_0_2031;
+
+	if (disable)
+		data = LASER_OFF_2031;
+	else
+		data = LASER_ON_2031;
+
+	qla83xx_wr_reg(vha, reg, data);
+}
+
+
+static ssize_t
+qla2x00_laser_store(struct device *cdev, struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	scsi_qla_host_t *vha = shost_priv(class_to_shost(cdev));
+	struct qla_hw_data *ha = vha->hw;
+	int val = 0;
+
+	if (!IS_QLA23XX(ha) && !IS_QLA24XX(ha) && !IS_QLA25XX(ha) &&
+		!IS_QLA2031(ha) && !IS_QLA27XX(ha) )
+		return -EINVAL;
+
+	if (sscanf(buf, "%d", &val) != 1)
+		return -EINVAL;
+
+	switch (val) {
+	case 0:
+		if (IS_QLA23XX(ha) || IS_QLA24XX(ha) || IS_QLA25XX(ha) ||
+			IS_QLA2031(ha)) {
+			printk(KERN_INFO "qla2xxx[%ld]: Disabling laser.\n",
+				vha->host_no);
+		} else {
+			printk(KERN_INFO "qla2xxx[%ld]: Laser option is not supported at this time.\n",
+				vha->host_no);
+			break;
+		}
+
+		if (IS_QLA23XX(ha))
+			qla2x00_disable_laser(vha);
+		else if (IS_QLA24XX(ha) || IS_QLA25XX(ha))
+			qla24xx_disable_laser(vha);
+		else if (IS_QLA2031(ha))
+			qla2031_laser_ctrl(vha, 1);
+		break;
+
+	default:
+		if (IS_QLA23XX(ha) || IS_QLA24XX(ha) || IS_QLA25XX(ha) ||
+			IS_QLA2031(ha)) {
+			printk(KERN_INFO "qla2xxx[%ld]: Enabling laser.\n",
+				vha->host_no);
+		} else {
+			printk(KERN_INFO "qla2xxx[%ld]: Laser option is not supported at this time.\n",
+				vha->host_no);
+			break;
+		}
+
+		if (IS_QLA23XX(ha))
+			qla2x00_enable_laser(vha);
+		else if (IS_QLA24XX(ha) || IS_QLA25XX(ha))
+			qla24xx_enable_laser(vha);
+		else if (IS_QLA2031(ha))
+			qla2031_laser_ctrl(vha, 0);
+		break;
+	}
+	return count;
+}
+
+static ssize_t
+qla2x00_laser_show(struct device *dev, struct device_attribute *attr,
+		char *buf)
+{
+	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
+	struct qla_hw_data *ha = vha->hw;
+	int size=0, max_size=PAGE_SIZE;
+
+	if (IS_QLA23XX(ha) || IS_QLA24XX(ha) || IS_QLA25XX(ha) ||
+		IS_QLA2031(ha)) {
+		size += scnprintf(buf+size, max_size-size,
+				"To control the laser (FC only)\n");
+		size += scnprintf(buf+size, max_size-size,
+				"\t echo 0|1 > laser \n");
+	} else
+		size += scnprintf(buf+size, max_size-size,
+			"Laser option is not supported at this time.\n");
+
+
+	return size;
+
+}
+
+/* end of laser */
+
+static ssize_t
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32)) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)))
+qla2x00_sysfs_read_fw_dump(
+#else
+qla2x00_sysfs_read_fw_dump(struct file *filp,
+#endif
+			struct kobject *kobj,
+			struct bin_attribute *bin_attr,
+			char *buf, loff_t off, size_t count)
 {
 	struct scsi_qla_host *vha = shost_priv(dev_to_shost(container_of(kobj,
 	    struct device, kobj)));
@@ -29,7 +827,7 @@ qla2x00_sysfs_read_fw_dump(struct file *filp, struct kobject *kobj,
 	if (!(ha->fw_dump_reading || ha->mctp_dump_reading))
 		return 0;
 
-	if (IS_QLA82XX(ha)) {
+	if (IS_P3P_TYPE(ha)) {
 		if (off < ha->md_template_size) {
 			rval = memory_read_from_buffer(buf, count,
 			    &off, ha->md_tmplt_hdr, ha->md_template_size);
@@ -50,9 +848,15 @@ qla2x00_sysfs_read_fw_dump(struct file *filp, struct kobject *kobj,
 }
 
 static ssize_t
-qla2x00_sysfs_write_fw_dump(struct file *filp, struct kobject *kobj,
-			    struct bin_attribute *bin_attr,
-			    char *buf, loff_t off, size_t count)
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32)) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)))
+qla2x00_sysfs_write_fw_dump(
+#else
+qla2x00_sysfs_write_fw_dump(struct file *filp,
+#endif
+			struct kobject *kobj,
+			struct bin_attribute *bin_attr,
+			char *buf, loff_t off, size_t count)
 {
 	struct scsi_qla_host *vha = shost_priv(dev_to_shost(container_of(kobj,
 	    struct device, kobj)));
@@ -71,10 +875,11 @@ qla2x00_sysfs_write_fw_dump(struct file *filp, struct kobject *kobj,
 		ql_log(ql_log_info, vha, 0x705d,
 		    "Firmware dump cleared on (%ld).\n", vha->host_no);
 
-		if (IS_QLA82XX(vha->hw)) {
+		if (IS_P3P_TYPE(ha)) {
 			qla82xx_md_free(vha);
 			qla82xx_md_prep(vha);
 		}
+
 		ha->fw_dump_reading = 0;
 		ha->fw_dumped = 0;
 		break;
@@ -95,11 +900,19 @@ qla2x00_sysfs_write_fw_dump(struct file *filp, struct kobject *kobj,
 			qla82xx_idc_lock(ha);
 			qla82xx_set_reset_owner(vha);
 			qla82xx_idc_unlock(ha);
-		} else
-			qla2x00_system_error(vha);
+		} else if (IS_QLA8044(ha)) {
+			qla8044_idc_lock(ha);
+			qla82xx_set_reset_owner(vha);
+			qla8044_idc_unlock(ha);
+		} else {
+			if (IS_VF_TYPE(ha))
+				ha->isp_ops->fw_dump(vha, 0);
+			else
+				qla2x00_system_error(vha);
+		}
 		break;
 	case 4:
-		if (IS_QLA82XX(ha)) {
+		if (IS_P3P_TYPE(ha)) {
 			if (ha->md_tmplt_hdr)
 				ql_dbg(ql_dbg_user, vha, 0x705b,
 				    "MiniDump supported with this firmware.\n");
@@ -109,14 +922,14 @@ qla2x00_sysfs_write_fw_dump(struct file *filp, struct kobject *kobj,
 		}
 		break;
 	case 5:
-		if (IS_QLA82XX(ha))
+		if (IS_P3P_TYPE(ha))
 			set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
 		break;
 	case 6:
 		if (!ha->mctp_dump_reading)
 			break;
 		ql_log(ql_log_info, vha, 0x70c1,
-		    "MCTP dump cleared on (%ld).\n", vha->host_no);
+		    "MCTP dump cleared on (%ld). \n", vha->host_no);
 		ha->mctp_dump_reading = 0;
 		ha->mctp_dumped = 0;
 		break;
@@ -127,6 +940,9 @@ qla2x00_sysfs_write_fw_dump(struct file *filp, struct kobject *kobj,
 			    "Raw mctp dump ready for read on (%ld).\n",
 			    vha->host_no);
 		}
+		break;
+	case 8:
+		ha->isp_ops->fw_dump(vha, 0);
 		break;
 	}
 	return count;
@@ -143,7 +959,111 @@ static struct bin_attribute sysfs_fw_dump_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_read_nvram(struct file *filp, struct kobject *kobj,
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32)) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)))
+qla2x00_sysfs_read_fw_dump_template(
+#else
+qla2x00_sysfs_read_fw_dump_template(struct file *filp,
+#endif
+				struct kobject *kobj,
+				struct bin_attribute *bin_attr,
+				char *buf, loff_t off, size_t count)
+{
+	struct scsi_qla_host *vha = shost_priv(dev_to_shost(container_of(kobj,
+	    struct device, kobj)));
+	struct qla_hw_data *ha = vha->hw;
+
+	if (!ha->fw_dump_template || !ha->fw_dump_template_len)
+		return 0;
+
+	ql_dbg(ql_dbg_user, vha, 0x70d0,
+	    "chunk <- off=%llx count=%zx\n", off, count);
+	return memory_read_from_buffer(buf, count, &off,
+	    ha->fw_dump_template, ha->fw_dump_template_len);
+}
+
+static ssize_t
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32)) ||\
+(defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)))
+qla2x00_sysfs_write_fw_dump_template(
+#else
+qla2x00_sysfs_write_fw_dump_template(struct file *filp,
+#endif
+				struct kobject *kobj,
+				struct bin_attribute *bin_attr,
+				char *buf, loff_t off, size_t count)
+{
+	struct scsi_qla_host *vha = shost_priv(dev_to_shost(container_of(kobj,
+	    struct device, kobj)));
+	struct qla_hw_data *ha = vha->hw;
+	uint32_t size;
+
+	if (off == 0) {
+		if (ha->fw_dump)
+			vfree(ha->fw_dump);
+		if (ha->fw_dump_template)
+			vfree(ha->fw_dump_template);
+
+		ha->fw_dump = NULL;
+		ha->fw_dump_len = 0;
+		ha->fw_dump_template = NULL;
+		ha->fw_dump_template_len = 0;
+
+		size = qla27xx_fwdt_template_size(buf);
+		ql_dbg(ql_dbg_user, vha, 0x70d1,
+		    "-> allocating fwdt (%x bytes)...\n", size);
+		ha->fw_dump_template = vmalloc(size);
+		if (!ha->fw_dump_template) {
+			ql_log(ql_log_warn, vha, 0x70d2,
+			    "Failed allocate fwdt (%x bytes).\n", size);
+			return -ENOMEM;
+		}
+		ha->fw_dump_template_len = size;
+	}
+
+	if (off + count > ha->fw_dump_template_len) {
+		count = ha->fw_dump_template_len - off;
+		ql_dbg(ql_dbg_user, vha, 0x70d3,
+		    "chunk -> truncating to %zx bytes.\n", count);
+	}
+
+	ql_dbg(ql_dbg_user, vha, 0x70d4,
+	    "chunk -> off=%llx count=%zx\n", off, count);
+	memcpy(ha->fw_dump_template + off, buf, count);
+
+	if (off + count == ha->fw_dump_template_len) {
+		size = qla27xx_fwdt_calculate_dump_size(vha);
+		ql_dbg(ql_dbg_user, vha, 0x70d5,
+		    "-> allocating fwdump (%x bytes)...\n", size);
+		ha->fw_dump = vmalloc(size);
+		if (!ha->fw_dump) {
+			ql_log(ql_log_warn, vha, 0x70d6,
+			    "Failed allocate fwdump (%x bytes).\n", size);
+			return -ENOMEM;
+		}
+		ha->fw_dump_len = size;
+	}
+
+	return count;
+}
+static struct bin_attribute sysfs_fw_dump_template_attr = {
+	.attr = {
+		.name = "fw_dump_template",
+		.mode = S_IRUSR | S_IWUSR,
+	},
+	.size = 0,
+	.read = qla2x00_sysfs_read_fw_dump_template,
+	.write = qla2x00_sysfs_write_fw_dump_template,
+};
+
+static ssize_t
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32)) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)))
+qla2x00_sysfs_read_nvram(
+#else
+qla2x00_sysfs_read_nvram(struct file *file,
+#endif
+			 struct kobject *kobj,
 			 struct bin_attribute *bin_attr,
 			 char *buf, loff_t off, size_t count)
 {
@@ -162,9 +1082,15 @@ qla2x00_sysfs_read_nvram(struct file *filp, struct kobject *kobj,
 }
 
 static ssize_t
-qla2x00_sysfs_write_nvram(struct file *filp, struct kobject *kobj,
-			  struct bin_attribute *bin_attr,
-			  char *buf, loff_t off, size_t count)
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32)) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)))
+qla2x00_sysfs_write_nvram(
+#else
+qla2x00_sysfs_write_nvram(struct file *filp,
+#endif
+			struct kobject *kobj,
+			struct bin_attribute *bin_attr,
+			char *buf, loff_t off, size_t count)
 {
 	struct scsi_qla_host *vha = shost_priv(dev_to_shost(container_of(kobj,
 	    struct device, kobj)));
@@ -230,23 +1156,38 @@ static struct bin_attribute sysfs_nvram_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_read_optrom(struct file *filp, struct kobject *kobj,
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32)) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)))
+qla2x00_sysfs_read_optrom(
+#else
+qla2x00_sysfs_read_optrom(struct file *file,
+#endif
+			  struct kobject *kobj,
 			  struct bin_attribute *bin_attr,
 			  char *buf, loff_t off, size_t count)
 {
 	struct scsi_qla_host *vha = shost_priv(dev_to_shost(container_of(kobj,
 	    struct device, kobj)));
 	struct qla_hw_data *ha = vha->hw;
+	ssize_t rval = 0;
 
-	if (ha->optrom_state != QLA_SREADING)
-		return 0;
-
-	return memory_read_from_buffer(buf, count, &off, ha->optrom_buffer,
-					ha->optrom_region_size);
+	mutex_lock(&ha->optrom_mutex);
+	if (ha->optrom_state == QLA_SREADING) {
+		rval = memory_read_from_buffer(buf, count, &off, ha->optrom_buffer,
+	    	ha->optrom_region_size);
+	}
+	mutex_unlock(&ha->optrom_mutex);
+	return rval;
 }
 
 static ssize_t
-qla2x00_sysfs_write_optrom(struct file *filp, struct kobject *kobj,
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32)) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)))
+qla2x00_sysfs_write_optrom(
+#else
+qla2x00_sysfs_write_optrom(struct file *file,
+#endif
+			   struct kobject *kobj,
 			   struct bin_attribute *bin_attr,
 			   char *buf, loff_t off, size_t count)
 {
@@ -261,7 +1202,9 @@ qla2x00_sysfs_write_optrom(struct file *filp, struct kobject *kobj,
 	if (off + count > ha->optrom_region_size)
 		count = ha->optrom_region_size - off;
 
+	mutex_lock(&ha->optrom_mutex);
 	memcpy(&ha->optrom_buffer[off], buf, count);
+	mutex_unlock(&ha->optrom_mutex);
 
 	return count;
 }
@@ -277,17 +1220,23 @@ static struct bin_attribute sysfs_optrom_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_write_optrom_ctl(struct file *filp, struct kobject *kobj,
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32)) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)))
+qla2x00_sysfs_write_optrom_ctl(
+#else
+qla2x00_sysfs_write_optrom_ctl(struct file *file,
+#endif
+			       struct kobject *kobj,
 			       struct bin_attribute *bin_attr,
 			       char *buf, loff_t off, size_t count)
 {
 	struct scsi_qla_host *vha = shost_priv(dev_to_shost(container_of(kobj,
 	    struct device, kobj)));
 	struct qla_hw_data *ha = vha->hw;
-
 	uint32_t start = 0;
 	uint32_t size = ha->optrom_size;
 	int val, valid;
+	ssize_t rval = count;
 
 	if (off)
 		return -EINVAL;
@@ -300,12 +1249,14 @@ qla2x00_sysfs_write_optrom_ctl(struct file *filp, struct kobject *kobj,
 	if (start > ha->optrom_size)
 		return -EINVAL;
 
+	mutex_lock(&ha->optrom_mutex);
 	switch (val) {
 	case 0:
 		if (ha->optrom_state != QLA_SREADING &&
-		    ha->optrom_state != QLA_SWRITING)
-			return -EINVAL;
-
+		    ha->optrom_state != QLA_SWRITING) {
+			rval =  -EINVAL;
+			goto out;
+		}
 		ha->optrom_state = QLA_SWAITING;
 
 		ql_dbg(ql_dbg_user, vha, 0x7061,
@@ -316,8 +1267,10 @@ qla2x00_sysfs_write_optrom_ctl(struct file *filp, struct kobject *kobj,
 		ha->optrom_buffer = NULL;
 		break;
 	case 1:
-		if (ha->optrom_state != QLA_SWAITING)
-			return -EINVAL;
+		if (ha->optrom_state != QLA_SWAITING) {
+			rval = -EINVAL;
+			goto out;
+		}
 
 		ha->optrom_region_start = start;
 		ha->optrom_region_size = start + size > ha->optrom_size ?
@@ -331,13 +1284,15 @@ qla2x00_sysfs_write_optrom_ctl(struct file *filp, struct kobject *kobj,
 			    "(%x).\n", ha->optrom_region_size);
 
 			ha->optrom_state = QLA_SWAITING;
-			return -ENOMEM;
+			rval = -ENOMEM;
+			goto out;
 		}
 
 		if (qla2x00_wait_for_hba_online(vha) != QLA_SUCCESS) {
 			ql_log(ql_log_warn, vha, 0x7063,
 			    "HBA not online, failing NVRAM update.\n");
-			return -EAGAIN;
+			rval = -EAGAIN;
+			goto out;
 		}
 
 		ql_dbg(ql_dbg_user, vha, 0x7064,
@@ -349,8 +1304,10 @@ qla2x00_sysfs_write_optrom_ctl(struct file *filp, struct kobject *kobj,
 		    ha->optrom_region_start, ha->optrom_region_size);
 		break;
 	case 2:
-		if (ha->optrom_state != QLA_SWAITING)
-			return -EINVAL;
+		if (ha->optrom_state != QLA_SWAITING) {
+			rval = -EINVAL;
+			goto out;
+		}
 
 		/*
 		 * We need to be more restrictive on which FLASH regions are
@@ -379,12 +1336,14 @@ qla2x00_sysfs_write_optrom_ctl(struct file *filp, struct kobject *kobj,
 		    start == (ha->flt_region_fw * 4))
 			valid = 1;
 		else if (IS_QLA24XX_TYPE(ha) || IS_QLA25XX(ha)
-			|| IS_CNA_CAPABLE(ha) || IS_QLA2031(ha))
-			valid = 1;
+			|| IS_CNA_CAPABLE(ha) || IS_QLA2031(ha)
+			|| IS_QLA27XX(ha))
+		    valid = 1;
 		if (!valid) {
 			ql_log(ql_log_warn, vha, 0x7065,
 			    "Invalid start region 0x%x/0x%x.\n", start, size);
-			return -EINVAL;
+			rval = -EINVAL;
+			goto out;
 		}
 
 		ha->optrom_region_start = start;
@@ -399,7 +1358,8 @@ qla2x00_sysfs_write_optrom_ctl(struct file *filp, struct kobject *kobj,
 			    "(%x)\n", ha->optrom_region_size);
 
 			ha->optrom_state = QLA_SWAITING;
-			return -ENOMEM;
+			rval = -ENOMEM;
+			goto out;
 		}
 
 		ql_dbg(ql_dbg_user, vha, 0x7067,
@@ -409,13 +1369,16 @@ qla2x00_sysfs_write_optrom_ctl(struct file *filp, struct kobject *kobj,
 		memset(ha->optrom_buffer, 0, ha->optrom_region_size);
 		break;
 	case 3:
-		if (ha->optrom_state != QLA_SWRITING)
-			return -EINVAL;
+		if (ha->optrom_state != QLA_SWRITING) {
+			rval = -EINVAL;
+			goto out;
+		}
 
 		if (qla2x00_wait_for_hba_online(vha) != QLA_SUCCESS) {
 			ql_log(ql_log_warn, vha, 0x7068,
 			    "HBA not online, failing flash update.\n");
-			return -EAGAIN;
+			rval = -EAGAIN;
+			goto out;
 		}
 
 		ql_dbg(ql_dbg_user, vha, 0x7069,
@@ -426,9 +1389,12 @@ qla2x00_sysfs_write_optrom_ctl(struct file *filp, struct kobject *kobj,
 		    ha->optrom_region_start, ha->optrom_region_size);
 		break;
 	default:
-		return -EINVAL;
+		rval = -EINVAL;
 	}
-	return count;
+
+out:
+	mutex_unlock(&ha->optrom_mutex);
+	return rval;
 }
 
 static struct bin_attribute sysfs_optrom_ctl_attr = {
@@ -441,7 +1407,13 @@ static struct bin_attribute sysfs_optrom_ctl_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_read_vpd(struct file *filp, struct kobject *kobj,
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32)) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)))
+qla2x00_sysfs_read_vpd(
+#else
+qla2x00_sysfs_read_vpd(struct file *file,
+#endif
+		       struct kobject *kobj,
 		       struct bin_attribute *bin_attr,
 		       char *buf, loff_t off, size_t count)
 {
@@ -462,7 +1434,13 @@ qla2x00_sysfs_read_vpd(struct file *filp, struct kobject *kobj,
 }
 
 static ssize_t
-qla2x00_sysfs_write_vpd(struct file *filp, struct kobject *kobj,
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32)) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)))
+qla2x00_sysfs_write_vpd(
+#else
+qla2x00_sysfs_write_vpd(struct file *file,
+#endif
+			struct kobject *kobj,
 			struct bin_attribute *bin_attr,
 			char *buf, loff_t off, size_t count)
 {
@@ -515,7 +1493,13 @@ static struct bin_attribute sysfs_vpd_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_read_sfp(struct file *filp, struct kobject *kobj,
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32)) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)))
+qla2x00_sysfs_read_sfp(
+#else
+qla2x00_sysfs_read_sfp(struct file *file,
+#endif
+		       struct kobject *kobj,
 		       struct bin_attribute *bin_attr,
 		       char *buf, loff_t off, size_t count)
 {
@@ -551,7 +1535,7 @@ do_read:
 		}
 
 		rval = qla2x00_read_sfp(vha, ha->sfp_data_dma, ha->sfp_data,
-		    addr, offset, SFP_BLOCK_SIZE, 0);
+		    addr, offset, SFP_BLOCK_SIZE, BIT_1);
 		if (rval != QLA_SUCCESS) {
 			ql_log(ql_log_warn, vha, 0x706d,
 			    "Unable to read SFP data (%x/%x/%x).\n", rval,
@@ -576,7 +1560,13 @@ static struct bin_attribute sysfs_sfp_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_write_reset(struct file *filp, struct kobject *kobj,
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32)) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)))
+qla2x00_sysfs_write_reset(
+#else
+qla2x00_sysfs_write_reset(struct file *filp,
+#endif
+			struct kobject *kobj,
 			struct bin_attribute *bin_attr,
 			char *buf, loff_t off, size_t count)
 {
@@ -586,7 +1576,7 @@ qla2x00_sysfs_write_reset(struct file *filp, struct kobject *kobj,
 	struct scsi_qla_host *base_vha = pci_get_drvdata(ha->pdev);
 	int type;
 	uint32_t idc_control;
-
+	uint8_t *tmp_data = NULL;
 	if (off != 0)
 		return -EINVAL;
 
@@ -597,14 +1587,23 @@ qla2x00_sysfs_write_reset(struct file *filp, struct kobject *kobj,
 		    "Issuing ISP reset.\n");
 
 		scsi_block_requests(vha->host);
-		set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
 		if (IS_QLA82XX(ha)) {
 			ha->flags.isp82xx_no_md_cap = 1;
 			qla82xx_idc_lock(ha);
 			qla82xx_set_reset_owner(vha);
 			qla82xx_idc_unlock(ha);
+		} else if (IS_QLA8044(ha)) {
+			qla8044_idc_lock(ha);
+			idc_control = qla8044_rd_reg(ha,
+			    QLA8044_IDC_DRV_CTRL);
+			qla8044_wr_reg(ha, QLA8044_IDC_DRV_CTRL,
+			    (idc_control | GRACEFUL_RESET_BIT1));
+			qla82xx_set_reset_owner(vha);
+			qla8044_idc_unlock(ha);
+		} else {
+			set_bit(ISP_ABORT_NEEDED, &vha->dpc_flags);
+			qla2xxx_wake_dpc(vha);
 		}
-		qla2xxx_wake_dpc(vha);
 		qla2x00_wait_for_chip_reset(vha);
 		scsi_unblock_requests(vha->host);
 		break;
@@ -640,7 +1639,7 @@ qla2x00_sysfs_write_reset(struct file *filp, struct kobject *kobj,
 			break;
 		}
 	case 0x2025e:
-		if (!IS_QLA82XX(ha) || vha != base_vha) {
+		if (!IS_P3P_TYPE(ha) || vha != base_vha) {
 			ql_log(ql_log_info, vha, 0x7071,
 			    "FCoE ctx reset no supported.\n");
 			return -EPERM;
@@ -674,7 +1673,19 @@ qla2x00_sysfs_write_reset(struct file *filp, struct kobject *kobj,
 		__qla83xx_set_idc_control(vha, idc_control);
 		qla83xx_idc_unlock(vha, 0);
 		break;
+	case 0x20261:
+		ql_dbg(ql_dbg_user, vha, 0x70e0,
+		    "Updating cache versions without reset ");
 
+		tmp_data = vmalloc(256);
+		if (!tmp_data) {
+			ql_log(ql_log_warn, vha, 0x70e1,
+			    "Unable to allocate memory for VPD information update.\n");
+			return -ENOMEM;
+		}
+		ha->isp_ops->get_flash_version(vha, tmp_data);
+		vfree(tmp_data);
+		break;
 	}
 	return count;
 }
@@ -689,9 +1700,15 @@ static struct bin_attribute sysfs_reset_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_read_xgmac_stats(struct file *filp, struct kobject *kobj,
-		       struct bin_attribute *bin_attr,
-		       char *buf, loff_t off, size_t count)
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32)) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)))
+qla2x00_sysfs_read_xgmac_stats(
+#else
+qla2x00_sysfs_read_xgmac_stats(struct file *filp,
+#endif
+			struct kobject *kobj,
+			struct bin_attribute *bin_attr,
+			char *buf, loff_t off, size_t count)
 {
 	struct scsi_qla_host *vha = shost_priv(dev_to_shost(container_of(kobj,
 	    struct device, kobj)));
@@ -741,15 +1758,20 @@ static struct bin_attribute sysfs_xgmac_stats_attr = {
 };
 
 static ssize_t
-qla2x00_sysfs_read_dcbx_tlv(struct file *filp, struct kobject *kobj,
-		       struct bin_attribute *bin_attr,
-		       char *buf, loff_t off, size_t count)
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32)) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)))
+qla2x00_sysfs_read_dcbx_tlv(
+#else
+qla2x00_sysfs_read_dcbx_tlv(struct file *filp,
+#endif
+			struct kobject *kobj,
+			struct bin_attribute *bin_attr,
+			char *buf, loff_t off, size_t count)
 {
 	struct scsi_qla_host *vha = shost_priv(dev_to_shost(container_of(kobj,
 	    struct device, kobj)));
 	struct qla_hw_data *ha = vha->hw;
 	int rval;
-	uint16_t actual_size;
 
 	if (!capable(CAP_SYS_ADMIN) || off != 0 || count > DCBX_TLV_DATA_SIZE)
 		return 0;
@@ -766,7 +1788,6 @@ qla2x00_sysfs_read_dcbx_tlv(struct file *filp, struct kobject *kobj,
 	}
 
 do_read:
-	actual_size = 0;
 	memset(ha->dcbx_tlv, 0, DCBX_TLV_DATA_SIZE);
 
 	rval = qla2x00_get_dcbx_params(vha, ha->dcbx_tlv_dma,
@@ -791,12 +1812,193 @@ static struct bin_attribute sysfs_dcbx_tlv_attr = {
 	.read = qla2x00_sysfs_read_dcbx_tlv,
 };
 
+#ifdef QLA_SYS_IFACE_DEBUG
+static ssize_t
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32)) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)))
+qla2x00_sysfs_read_debug(
+#else
+qla2x00_sysfs_read_debug(struct file *file,
+#endif
+		       struct kobject *kobj,
+		       struct bin_attribute *bin_attr,
+		       char *buf, loff_t off, size_t count)
+{
+	struct scsi_qla_host *vha = shost_priv(dev_to_shost(container_of(kobj,
+	    struct device, kobj)));
+	ssize_t cnt = 0;
+	uint32_t len;
+
+	if (!vha->dbg_cmd)
+		return cnt;
+
+	len = strlen(vha->dbg_cmd) + 1;
+	if (!off) {
+		loff_t tmp_off = 0;
+		/* Copy command first. */
+		cnt = memory_read_from_buffer(buf, count, &tmp_off,
+					vha->dbg_cmd, len);
+		if (cnt <= 0)
+			return cnt;
+		count -= (size_t)cnt;
+		buf += cnt;
+	} else {
+		/* data copied from dbg_cmd has to be accounted for */
+		off -= len;
+	}
+
+	cnt += memory_read_from_buffer(buf, count, &off,
+				vha->dbg_addr, vha->dbg_len);
+
+	return cnt;
+}
+
+static ssize_t
+qla_sys_debug_info(struct scsi_qla_host *vha, size_t count,
+			unsigned long *ret_addr, uint32_t *ret_len)
+{
+	struct qla_hw_data *ha = vha->hw;
+	struct scsi_qla_host *tvha;
+	unsigned long flags;
+	fc_port_t *fcport;
+	char *p, tmp_str[64];
+	uint32_t total_len, len, buf_len, pass;
+	struct pci_dev *pd = ha->pdev;
+
+	if (!ha)
+		return -EINVAL;
+
+	p = tmp_str;
+	buf_len = sizeof(tmp_str);
+	pass = 1;
+redo:
+	total_len = 0;
+	len = scnprintf(p, buf_len, "ha,%04x:%02x:%02x.%x,0x%lx,%u\n",
+			pci_domain_nr(pd->bus), pd->bus->number,
+			pd->devfn >> 3 & 0x1f, pd->devfn & 7, (long)ha,
+			(unsigned int)sizeof(*ha));
+	total_len += len;
+	if (pass == 2)
+		p += len;
+	spin_lock_irqsave(&ha->vport_slock, flags);
+	list_for_each_entry(tvha, &ha->vp_list, list) {
+		len = scnprintf(p, buf_len, "vha,%8phN,0x%lx,%u\n",
+			tvha->port_name, (long)tvha,
+			(unsigned int)sizeof(*tvha));
+		total_len += len;
+		if (pass == 2)
+			p += len;
+		list_for_each_entry_rcu(fcport, &tvha->vp_fcports, list) {
+			len = scnprintf(p, buf_len, "fp,%8phN,0x%lx,%u\n",
+				fcport->port_name, (long)fcport,
+				(unsigned int)sizeof(*fcport));
+			total_len += len;
+			if (pass == 2)
+				p += len;
+		}
+	}
+	spin_unlock_irqrestore(&ha->vport_slock, flags);
+	total_len += 1; /* For terminating NULL char. */
+
+	if (pass == 2) /* done copying */
+		return count;
+
+	p = kmalloc(total_len, GFP_KERNEL);
+	if (!p)
+		return -ENOMEM;
+	*ret_addr = (unsigned long)p;
+	*ret_len = total_len;
+
+	pass = 2;
+	buf_len = total_len;
+
+	goto redo;
+}
+
+static ssize_t
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 32)) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)))
+qla2x00_sysfs_write_debug(
+#else
+qla2x00_sysfs_write_debug(struct file *file,
+#endif
+			struct kobject *kobj,
+			struct bin_attribute *bin_attr,
+			char *buf, loff_t off, size_t count)
+{
+	struct scsi_qla_host *vha = shost_priv(dev_to_shost(container_of(kobj,
+	    struct device, kobj)));
+	char *tmp;
+	unsigned long addr;
+	uint32_t len, tlen;
+
+	if (off)
+		return -EINVAL;
+
+	buf[count - 1] = '\0'; /* safety */
+
+	tmp = strchr(buf, '\n');
+	if (tmp)
+		*tmp = '\0';
+
+	if (strncmp("info", buf, 4) == 0) {
+		ssize_t t_ret;
+		t_ret = qla_sys_debug_info(vha, count, &addr, &len);
+		if (t_ret < 0)
+			return t_ret;
+		count = (size_t)t_ret;
+		scnprintf(buf, PAGE_SIZE, "info,%u,0x%lx,-", len, addr);
+		goto ready;
+	}
+
+	/* Format: <id>,<len>,<addr>,<id-attr> */
+	tmp = strchr(buf, ',');
+	if (!tmp)
+		return -EINVAL;
+	tmp++;
+	if (sscanf(tmp, "%u,%lx", &len, &addr) != 2)
+		return -EINVAL;
+
+ready:
+	if (vha->dbg_cmd) {
+		if (strncmp("info", vha->dbg_cmd, 4) == 0)
+			kfree(vha->dbg_addr);
+		kfree(vha->dbg_cmd);
+		vha->dbg_cmd = NULL;
+	}
+
+	/* Add : for later printing */
+#define _QDEBUG_PFX	"qdbg:"
+	tlen = strlen(_QDEBUG_PFX) + strlen(buf) + strlen (":\n") + 1;
+
+	vha->dbg_cmd = kmalloc(tlen, GFP_KERNEL);
+	scnprintf(vha->dbg_cmd, tlen, _QDEBUG_PFX "%s:\n", buf);
+
+	vha->dbg_addr = (void*)addr;
+	vha->dbg_len = len;
+
+	return count;
+}
+
+static struct bin_attribute sysfs_debug_attr = {
+	.attr = {
+		.name = "debug",
+		.mode = S_IRUSR | S_IWUSR,
+	},
+	.size = 0,
+	.read = qla2x00_sysfs_read_debug,
+	.write = qla2x00_sysfs_write_debug,
+};
+
+#endif /* QLA_SYS_IFACE_DEBUG */
+
 static struct sysfs_entry {
 	char *name;
 	struct bin_attribute *attr;
 	int is4GBp_only;
 } bin_file_entries[] = {
 	{ "fw_dump", &sysfs_fw_dump_attr, },
+	{ "fw_dump_template", &sysfs_fw_dump_template_attr, 0x27 },
 	{ "nvram", &sysfs_nvram_attr, },
 	{ "optrom", &sysfs_optrom_attr, },
 	{ "optrom_ctl", &sysfs_optrom_ctl_attr, },
@@ -805,6 +2007,9 @@ static struct sysfs_entry {
 	{ "reset", &sysfs_reset_attr, },
 	{ "xgmac_stats", &sysfs_xgmac_stats_attr, 3 },
 	{ "dcbx_tlv", &sysfs_dcbx_tlv_attr, 3 },
+#ifdef QLA_SYS_IFACE_DEBUG
+	{ "debug", &sysfs_debug_attr, },
+#endif /* QLA_SYS_IFACE_DEBUG */
 	{ NULL },
 };
 
@@ -822,6 +2027,8 @@ qla2x00_alloc_sysfs_attr(scsi_qla_host_t *vha)
 			continue;
 		if (iter->is4GBp_only == 3 && !(IS_CNA_CAPABLE(vha->hw)))
 			continue;
+		if (iter->is4GBp_only == 0x27 && !IS_QLA27XX(vha->hw))
+			continue;
 
 		ret = sysfs_create_bin_file(&host->shost_gendev.kobj,
 		    iter->attr);
@@ -837,7 +2044,7 @@ qla2x00_alloc_sysfs_attr(scsi_qla_host_t *vha)
 }
 
 void
-qla2x00_free_sysfs_attr(scsi_qla_host_t *vha)
+qla2x00_free_sysfs_attr(scsi_qla_host_t *vha, bool stop_beacon)
 {
 	struct Scsi_Host *host = vha->host;
 	struct sysfs_entry *iter;
@@ -850,12 +2057,14 @@ qla2x00_free_sysfs_attr(scsi_qla_host_t *vha)
 			continue;
 		if (iter->is4GBp_only == 3 && !(IS_CNA_CAPABLE(vha->hw)))
 			continue;
+		if (iter->is4GBp_only == 0x27 && !IS_QLA27XX(vha->hw))
+			continue;
 
 		sysfs_remove_bin_file(&host->shost_gendev.kobj,
 		    iter->attr);
 	}
 
-	if (ha->beacon_blink_led == 1)
+	if (stop_beacon && ha->beacon_blink_led == 1)
 		ha->isp_ops->beacon_off(vha);
 }
 
@@ -865,7 +2074,7 @@ static ssize_t
 qla2x00_drvr_version_show(struct device *dev,
 			  struct device_attribute *attr, char *buf)
 {
-	return snprintf(buf, PAGE_SIZE, "%s\n", qla2x00_version_str);
+	return scnprintf(buf, PAGE_SIZE, "%s\n", qla2x00_version_str);
 }
 
 static ssize_t
@@ -876,8 +2085,8 @@ qla2x00_fw_version_show(struct device *dev,
 	struct qla_hw_data *ha = vha->hw;
 	char fw_str[128];
 
-	return snprintf(buf, PAGE_SIZE, "%s\n",
-	    ha->isp_ops->fw_version_str(vha, fw_str));
+	return scnprintf(buf, PAGE_SIZE, "%s\n",
+	    ha->isp_ops->fw_version_str(vha, fw_str, sizeof(fw_str)));
 }
 
 static ssize_t
@@ -888,13 +2097,16 @@ qla2x00_serial_num_show(struct device *dev, struct device_attribute *attr,
 	struct qla_hw_data *ha = vha->hw;
 	uint32_t sn;
 
-	if (IS_FWI2_CAPABLE(ha)) {
-		qla2xxx_get_vpd_field(vha, "SN", buf, PAGE_SIZE);
-		return snprintf(buf, PAGE_SIZE, "%s\n", buf);
+	if (IS_QLAFX00(vha->hw)) {
+		return scnprintf(buf, PAGE_SIZE, "%s\n",
+		    vha->hw->mr.serial_num);
+	} else if (IS_FWI2_CAPABLE(ha)) {
+		qla2xxx_get_vpd_field(vha, "SN", buf, PAGE_SIZE - 1);
+		return strlen(strcat(buf, "\n"));
 	}
 
 	sn = ((ha->serial0 & 0x1f) << 16) | (ha->serial2 << 8) | ha->serial1;
-	return snprintf(buf, PAGE_SIZE, "%c%05d\n", 'A' + sn / 100000,
+	return scnprintf(buf, PAGE_SIZE, "%c%05d\n", 'A' + sn / 100000,
 	    sn % 100000);
 }
 
@@ -903,7 +2115,7 @@ qla2x00_isp_name_show(struct device *dev, struct device_attribute *attr,
 		      char *buf)
 {
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
-	return snprintf(buf, PAGE_SIZE, "ISP%04X\n", vha->hw->pdev->device);
+	return scnprintf(buf, PAGE_SIZE, "ISP%04X\n", vha->hw->pdev->device);
 }
 
 static ssize_t
@@ -912,7 +2124,12 @@ qla2x00_isp_id_show(struct device *dev, struct device_attribute *attr,
 {
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 	struct qla_hw_data *ha = vha->hw;
-	return snprintf(buf, PAGE_SIZE, "%04x %04x %04x %04x\n",
+
+	if (IS_QLAFX00(vha->hw))
+		return snprintf(buf, PAGE_SIZE, "%s\n",
+		    vha->hw->mr.hw_version);
+
+	return scnprintf(buf, PAGE_SIZE, "%04x %04x %04x %04x\n",
 	    ha->product_id[0], ha->product_id[1], ha->product_id[2],
 	    ha->product_id[3]);
 }
@@ -922,7 +2139,7 @@ qla2x00_model_name_show(struct device *dev, struct device_attribute *attr,
 			char *buf)
 {
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
-	return snprintf(buf, PAGE_SIZE, "%s\n", vha->hw->model_number);
+	return scnprintf(buf, PAGE_SIZE, "%s\n", vha->hw->model_number);
 }
 
 static ssize_t
@@ -930,8 +2147,7 @@ qla2x00_model_desc_show(struct device *dev, struct device_attribute *attr,
 			char *buf)
 {
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
-	return snprintf(buf, PAGE_SIZE, "%s\n",
-	    vha->hw->model_desc ? vha->hw->model_desc : "");
+	return scnprintf(buf, PAGE_SIZE, "%s\n", vha->hw->model_desc);
 }
 
 static ssize_t
@@ -941,8 +2157,8 @@ qla2x00_pci_info_show(struct device *dev, struct device_attribute *attr,
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 	char pci_info[30];
 
-	return snprintf(buf, PAGE_SIZE, "%s\n",
-	    vha->hw->isp_ops->pci_info_str(vha, pci_info));
+	return scnprintf(buf, PAGE_SIZE, "%s\n",
+	    vha->hw->isp_ops->pci_info_str(vha, pci_info, sizeof(pci_info)));
 }
 
 static ssize_t
@@ -956,29 +2172,29 @@ qla2x00_link_state_show(struct device *dev, struct device_attribute *attr,
 	if (atomic_read(&vha->loop_state) == LOOP_DOWN ||
 	    atomic_read(&vha->loop_state) == LOOP_DEAD ||
 	    vha->device_flags & DFLG_NO_CABLE)
-		len = snprintf(buf, PAGE_SIZE, "Link Down\n");
+		len = scnprintf(buf, PAGE_SIZE, "Link Down\n");
 	else if (atomic_read(&vha->loop_state) != LOOP_READY ||
 	    qla2x00_reset_active(vha))
-		len = snprintf(buf, PAGE_SIZE, "Unknown Link State\n");
+		len = scnprintf(buf, PAGE_SIZE, "Unknown Link State\n");
 	else {
-		len = snprintf(buf, PAGE_SIZE, "Link Up - ");
+		len = scnprintf(buf, PAGE_SIZE, "Link Up - ");
 
 		switch (ha->current_topology) {
 		case ISP_CFG_NL:
-			len += snprintf(buf + len, PAGE_SIZE-len, "Loop\n");
+			len += scnprintf(buf + len, PAGE_SIZE-len, "Loop\n");
 			break;
 		case ISP_CFG_FL:
-			len += snprintf(buf + len, PAGE_SIZE-len, "FL_Port\n");
+			len += scnprintf(buf + len, PAGE_SIZE-len, "FL_Port\n");
 			break;
 		case ISP_CFG_N:
-			len += snprintf(buf + len, PAGE_SIZE-len,
+			len += scnprintf(buf + len, PAGE_SIZE-len,
 			    "N_Port to N_Port\n");
 			break;
 		case ISP_CFG_F:
-			len += snprintf(buf + len, PAGE_SIZE-len, "F_Port\n");
+			len += scnprintf(buf + len, PAGE_SIZE-len, "F_Port\n");
 			break;
 		default:
-			len += snprintf(buf + len, PAGE_SIZE-len, "Loop\n");
+			len += scnprintf(buf + len, PAGE_SIZE-len, "Loop\n");
 			break;
 		}
 	}
@@ -994,10 +2210,10 @@ qla2x00_zio_show(struct device *dev, struct device_attribute *attr,
 
 	switch (vha->hw->zio_mode) {
 	case QLA_ZIO_MODE_6:
-		len += snprintf(buf + len, PAGE_SIZE-len, "Mode 6\n");
+		len += scnprintf(buf + len, PAGE_SIZE-len, "Mode 6\n");
 		break;
 	case QLA_ZIO_DISABLED:
-		len += snprintf(buf + len, PAGE_SIZE-len, "Disabled\n");
+		len += scnprintf(buf + len, PAGE_SIZE-len, "Disabled\n");
 		break;
 	}
 	return len;
@@ -1037,7 +2253,7 @@ qla2x00_zio_timer_show(struct device *dev, struct device_attribute *attr,
 {
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 
-	return snprintf(buf, PAGE_SIZE, "%d us\n", vha->hw->zio_timer * 100);
+	return scnprintf(buf, PAGE_SIZE, "%d us\n", vha->hw->zio_timer * 100);
 }
 
 static ssize_t
@@ -1067,9 +2283,9 @@ qla2x00_beacon_show(struct device *dev, struct device_attribute *attr,
 	int len = 0;
 
 	if (vha->hw->beacon_blink_led)
-		len += snprintf(buf + len, PAGE_SIZE-len, "Enabled\n");
+		len += scnprintf(buf + len, PAGE_SIZE-len, "Enabled\n");
 	else
-		len += snprintf(buf + len, PAGE_SIZE-len, "Disabled\n");
+		len += scnprintf(buf + len, PAGE_SIZE-len, "Disabled\n");
 	return len;
 }
 
@@ -1111,7 +2327,7 @@ qla2x00_optrom_bios_version_show(struct device *dev,
 {
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 	struct qla_hw_data *ha = vha->hw;
-	return snprintf(buf, PAGE_SIZE, "%d.%02d\n", ha->bios_revision[1],
+	return scnprintf(buf, PAGE_SIZE, "%d.%02d\n", ha->bios_revision[1],
 	    ha->bios_revision[0]);
 }
 
@@ -1121,7 +2337,7 @@ qla2x00_optrom_efi_version_show(struct device *dev,
 {
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 	struct qla_hw_data *ha = vha->hw;
-	return snprintf(buf, PAGE_SIZE, "%d.%02d\n", ha->efi_revision[1],
+	return scnprintf(buf, PAGE_SIZE, "%d.%02d\n", ha->efi_revision[1],
 	    ha->efi_revision[0]);
 }
 
@@ -1131,7 +2347,7 @@ qla2x00_optrom_fcode_version_show(struct device *dev,
 {
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 	struct qla_hw_data *ha = vha->hw;
-	return snprintf(buf, PAGE_SIZE, "%d.%02d\n", ha->fcode_revision[1],
+	return scnprintf(buf, PAGE_SIZE, "%d.%02d\n", ha->fcode_revision[1],
 	    ha->fcode_revision[0]);
 }
 
@@ -1141,7 +2357,7 @@ qla2x00_optrom_fw_version_show(struct device *dev,
 {
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 	struct qla_hw_data *ha = vha->hw;
-	return snprintf(buf, PAGE_SIZE, "%d.%02d.%02d %d\n",
+	return scnprintf(buf, PAGE_SIZE, "%d.%02d.%02d %d\n",
 	    ha->fw_revision[0], ha->fw_revision[1], ha->fw_revision[2],
 	    ha->fw_revision[3]);
 }
@@ -1153,10 +2369,10 @@ qla2x00_optrom_gold_fw_version_show(struct device *dev,
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 	struct qla_hw_data *ha = vha->hw;
 
-	if (!IS_QLA81XX(ha) && !IS_QLA83XX(ha))
-		return snprintf(buf, PAGE_SIZE, "\n");
+	if (!IS_QLA81XX(ha) && !IS_QLA83XX(ha) && !IS_QLA27XX(ha))
+		return scnprintf(buf, PAGE_SIZE, "\n");
 
-	return snprintf(buf, PAGE_SIZE, "%d.%02d.%02d (%d)\n",
+	return scnprintf(buf, PAGE_SIZE, "%d.%02d.%02d (%d)\n",
 	    ha->gold_fw_version[0], ha->gold_fw_version[1],
 	    ha->gold_fw_version[2], ha->gold_fw_version[3]);
 }
@@ -1166,7 +2382,7 @@ qla2x00_total_isp_aborts_show(struct device *dev,
 			      struct device_attribute *attr, char *buf)
 {
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
-	return snprintf(buf, PAGE_SIZE, "%d\n",
+	return scnprintf(buf, PAGE_SIZE, "%d\n",
 	    vha->qla_stats.total_isp_aborts);
 }
 
@@ -1180,16 +2396,16 @@ qla24xx_84xx_fw_version_show(struct device *dev,
 	struct qla_hw_data *ha = vha->hw;
 
 	if (!IS_QLA84XX(ha))
-		return snprintf(buf, PAGE_SIZE, "\n");
+		return scnprintf(buf, PAGE_SIZE, "\n");
 
 	if (ha->cs84xx->op_fw_version == 0)
 		rval = qla84xx_verify_chip(vha, status);
 
 	if ((rval == QLA_SUCCESS) && (status[0] == 0))
-		return snprintf(buf, PAGE_SIZE, "%u\n",
+		return scnprintf(buf, PAGE_SIZE, "%u\n",
 			(uint32_t)ha->cs84xx->op_fw_version);
 
-	return snprintf(buf, PAGE_SIZE, "\n");
+	return scnprintf(buf, PAGE_SIZE, "\n");
 }
 
 static ssize_t
@@ -1199,10 +2415,11 @@ qla2x00_mpi_version_show(struct device *dev, struct device_attribute *attr,
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 	struct qla_hw_data *ha = vha->hw;
 
-	if (!IS_QLA81XX(ha) && !IS_QLA8031(ha))
-		return snprintf(buf, PAGE_SIZE, "\n");
+	if (!IS_QLA81XX(ha) && !IS_QLA8031(ha) && !IS_QLA8044(ha)
+		&& !IS_QLA27XX(ha))
+		return scnprintf(buf, PAGE_SIZE, "\n");
 
-	return snprintf(buf, PAGE_SIZE, "%d.%02d.%02d (%x)\n",
+	return scnprintf(buf, PAGE_SIZE, "%d.%02d.%02d (%x)\n",
 	    ha->mpi_version[0], ha->mpi_version[1], ha->mpi_version[2],
 	    ha->mpi_capabilities);
 }
@@ -1215,9 +2432,9 @@ qla2x00_phy_version_show(struct device *dev, struct device_attribute *attr,
 	struct qla_hw_data *ha = vha->hw;
 
 	if (!IS_QLA81XX(ha) && !IS_QLA8031(ha))
-		return snprintf(buf, PAGE_SIZE, "\n");
+		return scnprintf(buf, PAGE_SIZE, "\n");
 
-	return snprintf(buf, PAGE_SIZE, "%d.%02d.%02d\n",
+	return scnprintf(buf, PAGE_SIZE, "%d.%02d.%02d\n",
 	    ha->phy_version[0], ha->phy_version[1], ha->phy_version[2]);
 }
 
@@ -1228,7 +2445,7 @@ qla2x00_flash_block_size_show(struct device *dev,
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 	struct qla_hw_data *ha = vha->hw;
 
-	return snprintf(buf, PAGE_SIZE, "0x%x\n", ha->fdt_block_size);
+	return scnprintf(buf, PAGE_SIZE, "0x%x\n", ha->fdt_block_size);
 }
 
 static ssize_t
@@ -1238,9 +2455,9 @@ qla2x00_vlan_id_show(struct device *dev, struct device_attribute *attr,
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 
 	if (!IS_CNA_CAPABLE(vha->hw))
-		return snprintf(buf, PAGE_SIZE, "\n");
+		return scnprintf(buf, PAGE_SIZE, "\n");
 
-	return snprintf(buf, PAGE_SIZE, "%d\n", vha->fcoe_vlan_id);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", vha->fcoe_vlan_id);
 }
 
 static ssize_t
@@ -1250,9 +2467,9 @@ qla2x00_vn_port_mac_address_show(struct device *dev,
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 
 	if (!IS_CNA_CAPABLE(vha->hw))
-		return snprintf(buf, PAGE_SIZE, "\n");
+		return scnprintf(buf, PAGE_SIZE, "\n");
 
-	return snprintf(buf, PAGE_SIZE, "%02x:%02x:%02x:%02x:%02x:%02x\n",
+	return scnprintf(buf, PAGE_SIZE, "%02x:%02x:%02x:%02x:%02x:%02x\n",
 	    vha->fcoe_vn_port_mac[5], vha->fcoe_vn_port_mac[4],
 	    vha->fcoe_vn_port_mac[3], vha->fcoe_vn_port_mac[2],
 	    vha->fcoe_vn_port_mac[1], vha->fcoe_vn_port_mac[0]);
@@ -1264,7 +2481,7 @@ qla2x00_fabric_param_show(struct device *dev, struct device_attribute *attr,
 {
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 
-	return snprintf(buf, PAGE_SIZE, "%d\n", vha->hw->switch_cap);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", vha->hw->switch_cap);
 }
 
 static ssize_t
@@ -1272,22 +2489,23 @@ qla2x00_thermal_temp_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
-	int rval = QLA_FUNCTION_FAILED;
-	uint16_t temp, frac;
+	uint16_t temp = 0;
 
-	if (!vha->hw->flags.thermal_supported)
-		return snprintf(buf, PAGE_SIZE, "\n");
+	if (qla2x00_reset_active(vha)) {
+		ql_log(ql_log_warn, vha, 0x70dc, "ISP reset active.\n");
+		goto done;
+	}
 
-	temp = frac = 0;
-	if (qla2x00_reset_active(vha))
-		ql_log(ql_log_warn, vha, 0x707b,
-		    "ISP reset active.\n");
-	else if (!vha->hw->flags.eeh_busy)
-		rval = qla2x00_get_thermal_temp(vha, &temp, &frac);
-	if (rval != QLA_SUCCESS)
-		return snprintf(buf, PAGE_SIZE, "\n");
+	if (vha->hw->flags.eeh_busy) {
+		ql_log(ql_log_warn, vha, 0x70dd, "PCI EEH busy.\n");
+		goto done;
+	}
 
-	return snprintf(buf, PAGE_SIZE, "%d.%02d\n", temp, frac);
+	if (qla2x00_get_thermal_temp(vha, &temp) == QLA_SUCCESS)
+		return scnprintf(buf, PAGE_SIZE, "%d\n", temp);
+
+done:
+	return scnprintf(buf, PAGE_SIZE, "\n");
 }
 
 static ssize_t
@@ -1296,7 +2514,13 @@ qla2x00_fw_state_show(struct device *dev, struct device_attribute *attr,
 {
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 	int rval = QLA_FUNCTION_FAILED;
-	uint16_t state[5];
+	uint16_t state[6];
+	uint32_t pstate;
+
+	if (IS_QLAFX00(vha->hw)) {
+		pstate = qlafx00_fw_state_show(dev, attr, buf);
+		return scnprintf(buf, PAGE_SIZE, "0x%x\n", pstate);
+	}
 
 	if (qla2x00_reset_active(vha))
 		ql_log(ql_log_warn, vha, 0x707c,
@@ -1306,8 +2530,8 @@ qla2x00_fw_state_show(struct device *dev, struct device_attribute *attr,
 	if (rval != QLA_SUCCESS)
 		memset(state, -1, sizeof(state));
 
-	return snprintf(buf, PAGE_SIZE, "0x%x 0x%x 0x%x 0x%x 0x%x\n", state[0],
-	    state[1], state[2], state[3], state[4]);
+	return scnprintf(buf, PAGE_SIZE, "0x%x 0x%x 0x%x 0x%x 0x%x 0x%x\n",
+	    state[0], state[1], state[2], state[3], state[4], state[5]);
 }
 
 static ssize_t
@@ -1317,9 +2541,9 @@ qla2x00_diag_requests_show(struct device *dev,
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 
 	if (!IS_BIDI_CAPABLE(vha->hw))
-		return snprintf(buf, PAGE_SIZE, "\n");
+		return scnprintf(buf, PAGE_SIZE, "\n");
 
-	return snprintf(buf, PAGE_SIZE, "%llu\n", vha->bidi_stats.io_count);
+	return scnprintf(buf, PAGE_SIZE, "%llu\n", vha->bidi_stats.io_count);
 }
 
 static ssize_t
@@ -1329,15 +2553,15 @@ qla2x00_diag_megabytes_show(struct device *dev,
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 
 	if (!IS_BIDI_CAPABLE(vha->hw))
-		return snprintf(buf, PAGE_SIZE, "\n");
+		return scnprintf(buf, PAGE_SIZE, "\n");
 
-	return snprintf(buf, PAGE_SIZE, "%llu\n",
+	return scnprintf(buf, PAGE_SIZE, "%llu\n",
 	    vha->bidi_stats.transfer_bytes >> 20);
 }
 
 static ssize_t
 qla2x00_fw_dump_size_show(struct device *dev, struct device_attribute *attr,
-	char *buf)
+    char *buf)
 {
 	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
 	struct qla_hw_data *ha = vha->hw;
@@ -1345,12 +2569,270 @@ qla2x00_fw_dump_size_show(struct device *dev, struct device_attribute *attr,
 
 	if (!ha->fw_dumped)
 		size = 0;
-	else if (IS_QLA82XX(ha))
+	else if (IS_P3P_TYPE(ha))
 		size = ha->md_template_size + ha->md_dump_size;
 	else
 		size = ha->fw_dump_len;
 
-	return snprintf(buf, PAGE_SIZE, "%d\n", size);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", size);
+}
+
+static ssize_t
+qla2x00_allow_cna_fw_dump_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
+
+	if (!IS_P3P_TYPE(vha->hw))
+		return scnprintf(buf, PAGE_SIZE, "\n");
+	else
+		return scnprintf(buf, PAGE_SIZE, "%s\n",
+		    vha->hw->allow_cna_fw_dump ? "true" : "false");
+}
+
+static ssize_t
+qla2x00_allow_cna_fw_dump_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
+	int val = 0;
+
+	if (!IS_P3P_TYPE(vha->hw))
+		return -EINVAL;
+
+	if (sscanf(buf, "%d", &val) != 1)
+		return -EINVAL;
+
+	vha->hw->allow_cna_fw_dump = val != 0;
+
+	return strlen(buf);
+}
+
+#ifdef CONFIG_SCSI_QLA2XXX_TARGET
+#include <linux/ctype.h>
+
+struct qla_trc_lvl_name {
+	uint32_t val;
+	const char *token;
+};
+
+static struct qla_trc_lvl_name qla_trc_tbl_name[] = {
+	{ql_dbg_init, "init"},
+	{ql_dbg_mbx,  "mbx"},
+	{ql_dbg_disc, "disc"},
+	{ql_dbg_io,   "io"},
+	{ql_dbg_dpc,  "dpc"},
+	{ql_dbg_async,"async"},
+	{ql_dbg_timer,"timer"},
+	{ql_dbg_user, "user"},
+	{ql_dbg_taskm,"taskm" },
+	{ql_dbg_aer,  "aer"},
+	{ql_dbg_multiq, "multiq"},
+	{ql_dbg_p3p,  "p3p"},
+	{ql_dbg_vport,"vport"},
+	{ql_dbg_buffer,"buffer"},
+	{ql_dbg_misc, "misc"},
+	{ql_dbg_verbose, "verbose"},
+	{ql_dbg_tgt,  "tgt"},
+	{ql_dbg_tgt_mgt, "tgtmgt" },
+	{ql_dbg_tgt_tmr, "tgttmr"},
+	{0, NULL},
+};
+
+#define TRACE_ALL (ql_dbg_init|ql_dbg_mbx|ql_dbg_disc|ql_dbg_io|\
+		ql_dbg_dpc|ql_dbg_async|ql_dbg_timer|ql_dbg_user|\
+		ql_dbg_taskm|ql_dbg_aer|ql_dbg_multiq|ql_dbg_p3p|\
+		ql_dbg_vport|ql_dbg_buffer|ql_dbg_misc|ql_dbg_verbose|\
+		ql_dbg_tgt|ql_dbg_tgt_mgt|ql_dbg_tgt_tmr)
+
+#define TRACE_NULL 0x00000000
+
+static ssize_t qla2x00_trace_level_show(struct device *dev,
+	struct device_attribute *attr, char *buffer)
+{
+	ulong max_size = PAGE_SIZE;
+	ulong size=0;
+
+	const struct qla_trc_lvl_name *t = qla_trc_tbl_name;
+
+	while (t->token) {
+		if (ql2xextended_error_logging & t->val) {
+			size += scnprintf(buffer + size, max_size-size,
+					"%s%s",
+					(size == 0) ? "" : " | ",
+					t->token);
+		}
+		t++;
+	}
+
+	size += scnprintf(buffer+size, max_size-size, "\n\n\nUsage:\n"
+		"       echo \"all|none|default\" >trace_level\n"
+		"       echo \"value DEC|0xHEX|0OCT\" >trace_level\n"
+		"       echo \"add|del TOKEN\" >trace_level\n"
+		"\nwhere TOKEN is one of [init, mbx, disc, io,\n"
+		"                      dpc, async, timer, user,\n"
+		"                      taskm, aer, multiq, p3p,\n"
+		"                      vport, buffer, misc,\n"
+		"                      verbose, tgt, tgtmgt, tgttmr\n");
+
+	return size;
+}
+
+static ssize_t qla2x00_trace_level_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	int action,res;
+	size_t size = count;
+	unsigned long level = 0, oldlevel;
+	enum {
+		SCST_TRACE_ACTION_ALL     = 1,
+		SCST_TRACE_ACTION_NONE    = 2,
+		SCST_TRACE_ACTION_DEFAULT = 3,
+		SCST_TRACE_ACTION_ADD     = 4,
+		SCST_TRACE_ACTION_DEL     = 5,
+		SCST_TRACE_ACTION_VALUE   = 6,
+	};
+	char *buffer, *p, *e;
+	const struct qla_trc_lvl_name *t;
+
+
+	buffer = kasprintf(GFP_KERNEL, "%.*s", (int)size, buf);
+	if (buffer == NULL) {
+		printk(KERN_INFO "Unable to alloc intermediate buffer (size %zd)",
+			size+1);
+		res = -ENOMEM;
+		goto out;
+	}
+
+	printk(KERN_INFO "buffer %s\n", buffer);
+
+	p = buffer;
+	if (!strncasecmp("all", p, 3)) {
+		action = SCST_TRACE_ACTION_ALL;
+	} else if (!strncasecmp("none", p, 4) || !strncasecmp("null", p, 4)) {
+		action = SCST_TRACE_ACTION_NONE;
+	} else if (!strncasecmp("default", p, 7)) {
+		action = SCST_TRACE_ACTION_DEFAULT;
+	} else if (!strncasecmp("add", p, 3)) {
+		p += 3;
+		action = SCST_TRACE_ACTION_ADD;
+	} else if (!strncasecmp("del", p, 3)) {
+		p += 3;
+		action = SCST_TRACE_ACTION_DEL;
+	} else if (!strncasecmp("value", p, 5)) {
+		p += 5;
+		action = SCST_TRACE_ACTION_VALUE;
+	} else {
+		if (p[strlen(p) - 1] == '\n')
+			p[strlen(p) - 1] = '\0';
+		printk(KERN_INFO "Unknown action \"%s\"", p);
+		res = -EINVAL;
+		goto out_free;
+	}
+
+	switch (action) {
+	case SCST_TRACE_ACTION_ADD:
+	case SCST_TRACE_ACTION_DEL:
+	case SCST_TRACE_ACTION_VALUE:
+		if (!isspace(*p)) {
+			printk(KERN_INFO "%s", "Syntax error");
+			res = -EINVAL;
+			goto out_free;
+		}
+	}
+
+	switch (action) {
+	case SCST_TRACE_ACTION_ALL:
+		level = TRACE_ALL;
+		break;
+	case SCST_TRACE_ACTION_DEFAULT:
+		level = QL_DBG_DEFAULT1_MASK;
+		break;
+	case SCST_TRACE_ACTION_NONE:
+		level = TRACE_NULL;
+		break;
+	case SCST_TRACE_ACTION_ADD:
+	case SCST_TRACE_ACTION_DEL:
+		while (isspace(*p) && *p != '\0')
+			p++;
+		e = p;
+		while (!isspace(*e) && *e != '\0')
+			e++;
+		*e = 0;
+		t = qla_trc_tbl_name;
+		while (t->token) {
+			if (!strcasecmp(p, t->token)) {
+				level = t->val;
+				break;
+			}
+			t++;
+		}
+
+		if (level == 0) {
+			t = qla_trc_tbl_name;
+			while (t->token) {
+				if (!strcasecmp(p, t->token)) {
+					level = t->val;
+					break;
+				}
+				t++;
+			}
+		}
+		if (level == 0) {
+			printk(KERN_INFO "Unknown token \"%s\"", p);
+			res = -EINVAL;
+			goto out_free;
+		}
+		break;
+	case SCST_TRACE_ACTION_VALUE:
+		while (isspace(*p) && *p != '\0')
+			p++;
+		res = kstrtol(p, 0, &level);
+		if (res != 0) {
+			printk(KERN_INFO "Invalid trace value \"%s\"", p);
+			res = -EINVAL;
+			goto out_free;
+		}
+		break;
+	}
+
+	oldlevel = ql2xextended_error_logging;
+
+	switch (action) {
+	case SCST_TRACE_ACTION_ADD:
+		ql2xextended_error_logging |= level;
+		break;
+	case SCST_TRACE_ACTION_DEL:
+		ql2xextended_error_logging &= ~level;
+		break;
+	default:
+		ql2xextended_error_logging = level;
+		break;
+	}
+
+	printk(KERN_INFO "Changed \"ql2xextended_error_logging\": "
+		"old 0x%lx, new 0x%08x \n",
+		oldlevel, ql2xextended_error_logging);
+
+out_free:
+	kfree(buffer);
+out:
+	return size;
+}
+#endif /* CONFIG_SCSI_QLA2XXX_TARGET */
+
+static ssize_t
+qla2x00_pep_version_show(struct device *dev, struct device_attribute *attr,
+	char *buf)
+{
+	scsi_qla_host_t *vha = shost_priv(class_to_shost(dev));
+	struct qla_hw_data *ha = vha->hw;
+
+	if (!IS_QLA27XX(ha))
+		return scnprintf(buf, PAGE_SIZE, "\n");
+
+	return scnprintf(buf, PAGE_SIZE, "%d.%02d.%02d\n",
+	    ha->pep_version[0], ha->pep_version[1], ha->pep_version[2]);
 }
 
 static DEVICE_ATTR(driver_version, S_IRUGO, qla2x00_drvr_version_show, NULL);
@@ -1367,6 +2849,9 @@ static DEVICE_ATTR(zio_timer, S_IRUGO | S_IWUSR, qla2x00_zio_timer_show,
 		   qla2x00_zio_timer_store);
 static DEVICE_ATTR(beacon, S_IRUGO | S_IWUSR, qla2x00_beacon_show,
 		   qla2x00_beacon_store);
+static DEVICE_ATTR(laser, S_IRUGO | S_IWUSR, qla2x00_laser_show,
+		qla2x00_laser_store);
+
 static DEVICE_ATTR(optrom_bios_version, S_IRUGO,
 		   qla2x00_optrom_bios_version_show, NULL);
 static DEVICE_ATTR(optrom_efi_version, S_IRUGO,
@@ -1394,6 +2879,17 @@ static DEVICE_ATTR(thermal_temp, S_IRUGO, qla2x00_thermal_temp_show, NULL);
 static DEVICE_ATTR(diag_requests, S_IRUGO, qla2x00_diag_requests_show, NULL);
 static DEVICE_ATTR(diag_megabytes, S_IRUGO, qla2x00_diag_megabytes_show, NULL);
 static DEVICE_ATTR(fw_dump_size, S_IRUGO, qla2x00_fw_dump_size_show, NULL);
+static DEVICE_ATTR(allow_cna_fw_dump, S_IRUGO | S_IWUSR,
+		   qla2x00_allow_cna_fw_dump_show,
+		   qla2x00_allow_cna_fw_dump_store);
+#ifdef CONFIG_SCSI_QLA2XXX_TARGET
+static DEVICE_ATTR(trace_level, S_IRUGO|S_IWUSR, qla2x00_trace_level_show,
+	qla2x00_trace_level_store);
+#endif /* CONFIG_SCSI_QLA2XXX_TARGET */
+
+static DEVICE_ATTR(pep_version, S_IRUGO, qla2x00_pep_version_show, NULL);
+
+DEFINE_QLA_SRIOV_DEVICE_ATTR;
 
 struct device_attribute *qla2x00_host_attrs[] = {
 	&dev_attr_driver_version,
@@ -1408,11 +2904,23 @@ struct device_attribute *qla2x00_host_attrs[] = {
 	&dev_attr_zio,
 	&dev_attr_zio_timer,
 	&dev_attr_beacon,
+	&dev_attr_laser,
 	&dev_attr_optrom_bios_version,
 	&dev_attr_optrom_efi_version,
 	&dev_attr_optrom_fcode_version,
 	&dev_attr_optrom_fw_version,
 	&dev_attr_84xx_fw_version,
+	&dev_attr_class2_enabled,
+#ifdef CONFIG_SCSI_QLA2XXX_TARGET
+#ifdef CONFIG_SCST_PROC
+	&dev_attr_target_mode_enabled,
+	&dev_attr_explicit_conform_enabled,
+#endif
+	&dev_attr_ini_mode_force_reverse,
+	&dev_attr_resource_counts,
+	&dev_attr_port_database,
+	&dev_attr_trace_level,
+#endif
 	&dev_attr_total_isp_aborts,
 	&dev_attr_mpi_version,
 	&dev_attr_phy_version,
@@ -1426,6 +2934,9 @@ struct device_attribute *qla2x00_host_attrs[] = {
 	&dev_attr_diag_requests,
 	&dev_attr_diag_megabytes,
 	&dev_attr_fw_dump_size,
+	&dev_attr_allow_cna_fw_dump,
+	&dev_attr_pep_version,
+	DEFINE_QLA_SRIOV_DEVICE_ATTR_STRUCT
 	NULL,
 };
 
@@ -1447,6 +2958,11 @@ qla2x00_get_host_speed(struct Scsi_Host *shost)
 					(shost_priv(shost)))->hw;
 	u32 speed = FC_PORTSPEED_UNKNOWN;
 
+	if (IS_QLAFX00(ha)) {
+		qlafx00_get_host_speed(shost);
+		return;
+	}
+
 	switch (ha->link_data_rate) {
 	case PORT_SPEED_1GB:
 		speed = FC_PORTSPEED_1GBIT;
@@ -1465,6 +2981,11 @@ qla2x00_get_host_speed(struct Scsi_Host *shost)
 		break;
 	case PORT_SPEED_16GB:
 		speed = FC_PORTSPEED_16GBIT;
+		break;
+	case PORT_SPEED_32GB:
+#if LINUX_VERSION_CODE > KERNEL_VERSION(3, 14, 0)
+		speed = FC_PORTSPEED_32GBIT;
+#endif
 		break;
 	}
 	fc_host_speed(shost) = speed;
@@ -1505,7 +3026,7 @@ qla2x00_get_starget_node_name(struct scsi_target *starget)
 	fc_port_t *fcport;
 	u64 node_name = 0;
 
-	list_for_each_entry(fcport, &vha->vp_fcports, list) {
+	list_for_each_entry_rcu(fcport, &vha->vp_fcports, list) {
 		if (fcport->rport &&
 		    starget->id == fcport->rport->scsi_target_id) {
 			node_name = wwn_to_u64(fcport->node_name);
@@ -1524,7 +3045,7 @@ qla2x00_get_starget_port_name(struct scsi_target *starget)
 	fc_port_t *fcport;
 	u64 port_name = 0;
 
-	list_for_each_entry(fcport, &vha->vp_fcports, list) {
+	list_for_each_entry_rcu(fcport, &vha->vp_fcports, list) {
 		if (fcport->rport &&
 		    starget->id == fcport->rport->scsi_target_id) {
 			port_name = wwn_to_u64(fcport->port_name);
@@ -1543,7 +3064,7 @@ qla2x00_get_starget_port_id(struct scsi_target *starget)
 	fc_port_t *fcport;
 	uint32_t port_id = ~0U;
 
-	list_for_each_entry(fcport, &vha->vp_fcports, list) {
+	list_for_each_entry_rcu(fcport, &vha->vp_fcports, list) {
 		if (fcport->rport &&
 		    starget->id == fcport->rport->scsi_target_id) {
 			port_id = fcport->d_id.b.domain << 16 |
@@ -1582,6 +3103,10 @@ qla2x00_dev_loss_tmo_callbk(struct fc_rport *rport)
 	 * Transport has effectively 'deleted' the rport, clear
 	 * all local references.
 	 */
+#ifdef CONFIG_SCSI_QLA2XXX_TARGET
+	if (qla_target.tgt_fc_port_deleted)
+		qla_target.tgt_fc_port_deleted(fcport->vha, fcport);
+#endif
 	spin_lock_irqsave(host->host_lock, flags);
 	fcport->rport = fcport->drport = NULL;
 	*((fc_port_t **)rport->dd_data) = NULL;
@@ -1611,6 +3136,7 @@ qla2x00_terminate_rport_io(struct fc_rport *rport)
 		qla2x00_abort_all_cmds(fcport->vha, DID_NO_CONNECT << 16);
 		return;
 	}
+
 	/*
 	 * At this point all fcport's software-states are cleared.  Perform any
 	 * final cleanup of firmware resources (PCBs and XCBs).
@@ -1623,12 +3149,22 @@ qla2x00_terminate_rport_io(struct fc_rport *rport)
 		else
 			qla2x00_port_logout(fcport->vha, fcport);
 	}
+#ifdef CONFIG_SCSI_QLA2XXX_TARGET
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0) && !defined(CONFIG_SUSE_KERNEL)
+	scsi_target_unblock(&rport->dev, SDEV_BLOCK);
+#elif LINUX_VERSION_CODE < KERNEL_VERSION(3, 5, 0) && !defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 32)
+	scsi_target_unblock(&rport->dev);
+#endif
+#endif
 }
 
 static int
 qla2x00_issue_lip(struct Scsi_Host *shost)
 {
 	scsi_qla_host_t *vha = shost_priv(shost);
+
+	if (IS_QLAFX00(vha->hw))
+		return 0;
 
 	qla2x00_loop_reset(vha);
 	return 0;
@@ -1648,10 +3184,16 @@ qla2x00_get_fc_host_stats(struct Scsi_Host *shost)
 	pfc_host_stat = &vha->fc_host_stat;
 	memset(pfc_host_stat, -1, sizeof(struct fc_host_statistics));
 
+	if (IS_QLAFX00(vha->hw))
+		goto done;
+
 	if (test_bit(UNLOADING, &vha->dpc_flags))
 		goto done;
 
 	if (unlikely(pci_channel_offline(ha->pdev)))
+		goto done;
+
+	if (qla2x00_reset_active(vha))
 		goto done;
 
 	stats = dma_pool_alloc(ha->s_dma_pool, GFP_KERNEL, &stats_dma);
@@ -1660,13 +3202,14 @@ qla2x00_get_fc_host_stats(struct Scsi_Host *shost)
 		    "Failed to allocate memory for stats.\n");
 		goto done;
 	}
-	memset(stats, 0, DMA_POOL_SIZE);
+	BUG_ON(sizeof(*stats) > DMA_POOL_SIZE);
+	memset(stats, 0, sizeof(*stats));
 
 	rval = QLA_FUNCTION_FAILED;
 	if (IS_FWI2_CAPABLE(ha)) {
 		rval = qla24xx_get_isp_stats(base_vha, stats, stats_dma);
 	} else if (atomic_read(&base_vha->loop_state) == LOOP_READY &&
-	    !qla2x00_reset_active(vha) && !ha->dpc_active) {
+	    !ha->dpc_active) {
 		/* Must be in a 'READY' state for statistics retrieval. */
 		rval = qla2x00_get_link_status(base_vha, base_vha->loop_id,
 						stats, stats_dma);
@@ -1685,16 +3228,36 @@ qla2x00_get_fc_host_stats(struct Scsi_Host *shost)
 		pfc_host_stat->lip_count = stats->lip_cnt;
 		pfc_host_stat->tx_frames = stats->tx_frames;
 		pfc_host_stat->rx_frames = stats->rx_frames;
-		pfc_host_stat->dumped_frames = stats->dumped_frames;
+		pfc_host_stat->dumped_frames = stats->discarded_frames;
 		pfc_host_stat->nos_count = stats->nos_rcvd;
+		pfc_host_stat->error_frames =
+			stats->dropped_frames + stats->discarded_frames;
+		pfc_host_stat->rx_words = vha->qla_stats.input_bytes;
+		pfc_host_stat->tx_words = vha->qla_stats.output_bytes;
 	}
+	pfc_host_stat->fcp_control_requests = vha->qla_stats.control_requests;
+	pfc_host_stat->fcp_input_requests = vha->qla_stats.input_requests;
+	pfc_host_stat->fcp_output_requests = vha->qla_stats.output_requests;
 	pfc_host_stat->fcp_input_megabytes = vha->qla_stats.input_bytes >> 20;
 	pfc_host_stat->fcp_output_megabytes = vha->qla_stats.output_bytes >> 20;
+	pfc_host_stat->seconds_since_last_reset =
+		get_jiffies_64() - vha->qla_stats.jiffies_at_last_reset;
+	do_div(pfc_host_stat->seconds_since_last_reset, HZ);
 
 done_free:
-        dma_pool_free(ha->s_dma_pool, stats, stats_dma);
+	dma_pool_free(ha->s_dma_pool, stats, stats_dma);
 done:
 	return pfc_host_stat;
+}
+
+static void
+qla2x00_reset_host_stats(struct Scsi_Host *shost)
+{
+	scsi_qla_host_t *vha = shost_priv(shost);
+
+	memset(&vha->fc_host_stat, 0, sizeof(vha->fc_host_stat));
+
+	vha->qla_stats.jiffies_at_last_reset = get_jiffies_64();
 }
 
 static void
@@ -1702,7 +3265,8 @@ qla2x00_get_host_symbolic_name(struct Scsi_Host *shost)
 {
 	scsi_qla_host_t *vha = shost_priv(shost);
 
-	qla2x00_get_sym_node_name(vha, fc_host_symbolic_name(shost));
+	qla2x00_get_sym_node_name(vha, fc_host_symbolic_name(shost),
+	    sizeof(fc_host_symbolic_name(shost)));
 }
 
 static void
@@ -1717,14 +3281,12 @@ static void
 qla2x00_get_host_fabric_name(struct Scsi_Host *shost)
 {
 	scsi_qla_host_t *vha = shost_priv(shost);
-	uint8_t node_name[WWN_SIZE] = { 0xFF, 0xFF, 0xFF, 0xFF, \
-		0xFF, 0xFF, 0xFF, 0xFF};
-	u64 fabric_name = wwn_to_u64(node_name);
+	u64 node_name = 0xFFFFFFFF;
 
 	if (vha->device_flags & SWITCH_FOUND)
-		fabric_name = wwn_to_u64(vha->fabric_node_name);
+		node_name = wwn_to_u64(vha->fabric_node_name);
 
-	fc_host_fabric_name(shost) = fabric_name;
+	fc_host_fabric_name(shost) = node_name;
 }
 
 static void
@@ -1743,7 +3305,7 @@ qla2x00_get_host_port_state(struct Scsi_Host *shost)
 		fc_host_port_state(shost) = FC_PORTSTATE_DIAGNOSTICS;
 		break;
 	case LOOP_DOWN:
-		if (test_bit(LOOP_RESYNC_NEEDED, &base_vha->dpc_flags))
+		if(test_bit(LOOP_RESYNC_NEEDED, &base_vha->dpc_flags))
 			fc_host_port_state(shost) = FC_PORTSTATE_DIAGNOSTICS;
 		else
 			fc_host_port_state(shost) = FC_PORTSTATE_LINKDOWN;
@@ -1844,7 +3406,10 @@ qla24xx_vport_create(struct fc_vport *fc_vport, bool disable)
 	}
 
 	/* initialize attributes */
+#if !defined(CONFIG_SUSE_KERNEL) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE > KERNEL_VERSION(2,6,32))
 	fc_host_dev_loss_tmo(vha->host) = ha->port_down_retry_count;
+#endif
 	fc_host_node_name(vha->host) = wwn_to_u64(vha->node_name);
 	fc_host_port_name(vha->host) = wwn_to_u64(vha->port_name);
 	fc_host_supported_classes(vha->host) =
@@ -1852,7 +3417,26 @@ qla24xx_vport_create(struct fc_vport *fc_vport, bool disable)
 	fc_host_supported_speeds(vha->host) =
 		fc_host_supported_speeds(base_vha->host);
 
-	qlt_vport_create(vha, ha);
+#ifdef CONFIG_SCSI_QLA2XXX_TARGET
+	vha->vha_tgt.tgt = NULL;
+	vha->vha_tgt.q2t_tgt = NULL;
+	mutex_init(&vha->vha_tgt.tgt_mutex);
+	mutex_init(&vha->vha_tgt.tgt_host_action_mutex);
+	qla_clear_tgt_mode(vha);
+	qla2x00_send_enable_lun(vha, false);
+	if (IS_QLA24XX_TYPE(ha))
+		ha->ha_tgt.atio_q_length = ATIO_ENTRY_CNT_24XX;
+	else if (IS_QLA25XX(ha))
+		ha->ha_tgt.atio_q_length = ATIO_ENTRY_CNT_24XX;
+
+	if (qla_target.tgt_host_action != NULL)
+		qla_target.tgt_host_action(vha, ADD_TARGET);
+
+	/*
+	 * Must be after tgt_host_action() to not race with
+	 * qla2xxx_add_targets().
+	 */
+#endif
 	qla24xx_vport_disable(fc_vport, disable);
 
 	if (ha->flags.cpu_affinity_enabled) {
@@ -1914,6 +3498,10 @@ qla24xx_vport_delete(struct fc_vport *fc_vport)
 	    test_bit(FCPORT_UPDATE_NEEDED, &vha->dpc_flags))
 		msleep(1000);
 
+#ifdef CONFIG_SCSI_QLA2XXX_TARGET
+	if (qla_target.tgt_host_action != NULL)
+		qla_target.tgt_host_action(vha, REMOVE_TARGET);
+#endif
 	qla24xx_disable_vp(vha);
 
 	vha->flags.delete_progress = 1;
@@ -1931,10 +3519,16 @@ qla24xx_vport_delete(struct fc_vport *fc_vport)
 		    "Timer for the VP[%d] has stopped\n", vha->vp_idx);
 	}
 
+
 	/* No pending activities shall be there on the vha now */
 	if (ql2xextended_error_logging & ql_dbg_user)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 8, 0)
 		msleep(random32()%10);  /* Just to see if something falls on
 					* the net we have placed below */
+#else
+		msleep(prandom_u32()%10);  /* Just to see if something falls on
+					* the net we have placed below */
+#endif
 
 	BUG_ON(atomic_read(&vha->vref_count));
 
@@ -2008,6 +3602,7 @@ struct fc_function_template qla2xxx_transport_functions = {
 	.dev_loss_tmo_callbk = qla2x00_dev_loss_tmo_callbk,
 	.terminate_rport_io = qla2x00_terminate_rport_io,
 	.get_fc_host_stats = qla2x00_get_fc_host_stats,
+	.reset_fc_host_stats = qla2x00_reset_host_stats,
 
 	.vport_create = qla24xx_vport_create,
 	.vport_disable = qla24xx_vport_disable,
@@ -2054,6 +3649,8 @@ struct fc_function_template qla2xxx_transport_vport_functions = {
 	.dev_loss_tmo_callbk = qla2x00_dev_loss_tmo_callbk,
 	.terminate_rport_io = qla2x00_terminate_rport_io,
 	.get_fc_host_stats = qla2x00_get_fc_host_stats,
+	.reset_fc_host_stats = qla2x00_reset_host_stats,
+
 	.bsg_request = qla24xx_bsg_request,
 	.bsg_timeout = qla24xx_bsg_timeout,
 };
@@ -2064,11 +3661,14 @@ qla2x00_init_host_attr(scsi_qla_host_t *vha)
 	struct qla_hw_data *ha = vha->hw;
 	u32 speed = FC_PORTSPEED_UNKNOWN;
 
+#if !defined(CONFIG_SUSE_KERNEL) ||\
+ (defined(CONFIG_SUSE_KERNEL) && LINUX_VERSION_CODE > KERNEL_VERSION(2,6,32))
 	fc_host_dev_loss_tmo(vha->host) = ha->port_down_retry_count;
+#endif
 	fc_host_node_name(vha->host) = wwn_to_u64(vha->node_name);
 	fc_host_port_name(vha->host) = wwn_to_u64(vha->port_name);
-	fc_host_supported_classes(vha->host) = ha->tgt.enable_class_2 ?
-			(FC_COS_CLASS2|FC_COS_CLASS3) : FC_COS_CLASS3;
+	fc_host_supported_classes(vha->host) = ha->ha_tgt.enable_class_2 ?
+		(FC_COS_CLASS2|FC_COS_CLASS3) : FC_COS_CLASS3;
 	fc_host_max_npiv_vports(vha->host) = ha->max_npiv_vports;
 	fc_host_npiv_vports_inuse(vha->host) = ha->cur_vport_count;
 
@@ -2085,6 +3685,15 @@ qla2x00_init_host_attr(scsi_qla_host_t *vha)
 		    FC_PORTSPEED_1GBIT;
 	else if (IS_QLA23XX(ha))
 		speed = FC_PORTSPEED_2GBIT | FC_PORTSPEED_1GBIT;
+	else if (IS_QLAFX00(ha))
+		speed = FC_PORTSPEED_8GBIT | FC_PORTSPEED_4GBIT |
+		    FC_PORTSPEED_2GBIT | FC_PORTSPEED_1GBIT;
+	else if (IS_QLA27XX(ha))
+		/*
+		 * @todo - add FC_PORTSPEED_32GBIT as soon as
+		 * its defined in fc_transport.h file
+		 */
+		speed = FC_PORTSPEED_16GBIT | FC_PORTSPEED_8GBIT;
 	else
 		speed = FC_PORTSPEED_1GBIT;
 	fc_host_supported_speeds(vha->host) = speed;

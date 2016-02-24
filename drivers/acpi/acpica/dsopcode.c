@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2014, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -257,7 +257,7 @@ acpi_ds_init_buffer_field(u16 aml_opcode,
 	    (buffer_desc->common.reference_count +
 	     obj_desc->common.reference_count);
 
-      cleanup:
+cleanup:
 
 	/* Always delete the operands */
 
@@ -446,7 +446,7 @@ acpi_ds_eval_region_operands(struct acpi_walk_state *walk_state,
 
 	ACPI_DEBUG_PRINT((ACPI_DB_EXEC, "RgnObj %p Addr %8.8X%8.8X Len %X\n",
 			  obj_desc,
-			  ACPI_FORMAT_NATIVE_UINT(obj_desc->region.address),
+			  ACPI_FORMAT_UINT64(obj_desc->region.address),
 			  obj_desc->region.length));
 
 	/* Now the address and length are valid for this opregion */
@@ -486,18 +486,18 @@ acpi_ds_eval_table_region_operands(struct acpi_walk_state *walk_state,
 	ACPI_FUNCTION_TRACE_PTR(ds_eval_table_region_operands, op);
 
 	/*
-	 * This is where we evaluate the signature_string and oem_iDString
-	 * and oem_table_iDString of the data_table_region declaration
+	 * This is where we evaluate the Signature string, oem_id string,
+	 * and oem_table_id string of the Data Table Region declaration
 	 */
 	node = op->common.node;
 
-	/* next_op points to signature_string op */
+	/* next_op points to Signature string op */
 
 	next_op = op->common.value.arg;
 
 	/*
-	 * Evaluate/create the signature_string and oem_iDString
-	 * and oem_table_iDString operands
+	 * Evaluate/create the Signature string, oem_id string,
+	 * and oem_table_id string operands
 	 */
 	status = acpi_ds_create_operands(walk_state, next_op);
 	if (ACPI_FAILURE(status)) {
@@ -505,8 +505,8 @@ acpi_ds_eval_table_region_operands(struct acpi_walk_state *walk_state,
 	}
 
 	/*
-	 * Resolve the signature_string and oem_iDString
-	 * and oem_table_iDString operands
+	 * Resolve the Signature string, oem_id string,
+	 * and oem_table_id string operands
 	 */
 	status = acpi_ex_resolve_operands(op->common.aml_opcode,
 					  ACPI_WALK_OPERANDS, walk_state);
@@ -539,13 +539,12 @@ acpi_ds_eval_table_region_operands(struct acpi_walk_state *walk_state,
 		return_ACPI_STATUS(AE_NOT_EXIST);
 	}
 
-	obj_desc->region.address =
-	    (acpi_physical_address) ACPI_TO_INTEGER(table);
+	obj_desc->region.address = ACPI_PTR_TO_PHYSADDR(table);
 	obj_desc->region.length = table->length;
 
 	ACPI_DEBUG_PRINT((ACPI_DB_EXEC, "RgnObj %p Addr %8.8X%8.8X Len %X\n",
 			  obj_desc,
-			  ACPI_FORMAT_NATIVE_UINT(obj_desc->region.address),
+			  ACPI_FORMAT_UINT64(obj_desc->region.address),
 			  obj_desc->region.length));
 
 	/* Now the address and length are valid for this opregion */
@@ -636,6 +635,7 @@ acpi_ds_eval_data_object_operands(struct acpi_walk_state *walk_state,
 		break;
 
 	default:
+
 		return_ACPI_STATUS(AE_AML_BAD_OPCODE);
 	}
 

@@ -20,9 +20,9 @@
 #include <asm/mpc52xx.h>
 #include <asm/time.h>
 
-#include <sysdev/bestcomm/bestcomm.h>
-#include <sysdev/bestcomm/bestcomm_priv.h>
-#include <sysdev/bestcomm/gen_bd.h>
+#include <linux/fsl/bestcomm/bestcomm.h>
+#include <linux/fsl/bestcomm/bestcomm_priv.h>
+#include <linux/fsl/bestcomm/gen_bd.h>
 
 MODULE_AUTHOR("Grant Likely <grant.likely@secretlab.ca>");
 MODULE_DESCRIPTION("MPC5200 LocalPlus FIFO device driver");
@@ -245,7 +245,7 @@ static irqreturn_t mpc52xx_lpbfifo_irq(int irq, void *dev_id)
 
 	if (dma && !write) {
 		spin_unlock_irqrestore(&lpbfifo.lock, flags);
-		pr_err("bogus LPBFIFO IRQ (dma and not writting)\n");
+		pr_err("bogus LPBFIFO IRQ (dma and not writing)\n");
 		return IRQ_HANDLED;
 	}
 
@@ -564,7 +564,7 @@ static int mpc52xx_lpbfifo_remove(struct platform_device *op)
 	return 0;
 }
 
-static struct of_device_id mpc52xx_lpbfifo_match[] = {
+static const struct of_device_id mpc52xx_lpbfifo_match[] = {
 	{ .compatible = "fsl,mpc5200-lpbfifo", },
 	{},
 };

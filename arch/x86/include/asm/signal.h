@@ -34,27 +34,6 @@ extern void do_notify_resume(struct pt_regs *, void *, __u32);
 
 #define __ARCH_HAS_SA_RESTORER
 
-#ifdef __i386__
-struct old_sigaction {
-	__sighandler_t sa_handler;
-	old_sigset_t sa_mask;
-	unsigned long sa_flags;
-	__sigrestore_t sa_restorer;
-};
-
-struct sigaction {
-	__sighandler_t sa_handler;
-	unsigned long sa_flags;
-	__sigrestore_t sa_restorer;
-	sigset_t sa_mask;		/* mask last for extensibility */
-};
-
-struct k_sigaction {
-	struct sigaction sa;
-};
-
-#else /* __i386__ */
-#endif /* !__i386__ */
 #include <asm/sigcontext.h>
 
 #ifdef __i386__
@@ -112,12 +91,6 @@ static inline int __gen_sigismember(sigset_t *set, int _sig)
 	(__builtin_constant_p(sig)		\
 	 ? __const_sigismember((set), (sig))	\
 	 : __gen_sigismember((set), (sig)))
-
-static inline int sigfindinword(unsigned long word)
-{
-	asm("bsfl %1,%0" : "=r"(word) : "rm"(word) : "cc");
-	return word;
-}
 
 struct pt_regs;
 

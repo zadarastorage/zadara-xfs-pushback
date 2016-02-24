@@ -82,7 +82,6 @@ static int create_file(const char *name, umode_t mode,
 {
 	int error;
 
-	*dentry = NULL;
 	mutex_lock(&parent->d_inode->i_mutex);
 	*dentry = lookup_one_len(name, parent, strlen(name));
 	if (!IS_ERR(*dentry))
@@ -113,7 +112,7 @@ static ssize_t atomic_counters_read(struct file *file, char __user *buf,
 	struct infinipath_counters counters;
 	struct ipath_devdata *dd;
 
-	dd = file->f_path.dentry->d_inode->i_private;
+	dd = file_inode(file)->i_private;
 	dd->ipath_f_read_counters(dd, &counters);
 
 	return simple_read_from_buffer(buf, count, ppos, &counters,
@@ -154,7 +153,7 @@ static ssize_t flash_read(struct file *file, char __user *buf,
 		goto bail;
 	}
 
-	dd = file->f_path.dentry->d_inode->i_private;
+	dd = file_inode(file)->i_private;
 	if (ipath_eeprom_read(dd, pos, tmp, count)) {
 		ipath_dev_err(dd, "failed to read from flash\n");
 		ret = -ENXIO;
@@ -207,7 +206,7 @@ static ssize_t flash_write(struct file *file, const char __user *buf,
 		goto bail_tmp;
 	}
 
-	dd = file->f_path.dentry->d_inode->i_private;
+	dd = file_inode(file)->i_private;
 	if (ipath_eeprom_write(dd, pos, tmp, count)) {
 		ret = -ENXIO;
 		ipath_dev_err(dd, "failed to write to flash\n");
@@ -410,6 +409,7 @@ static struct file_system_type ipathfs_fs_type = {
 	.mount =	ipathfs_mount,
 	.kill_sb =	ipathfs_kill_super,
 };
+MODULE_ALIAS_FS("ipathfs");
 
 int __init ipath_init_ipathfs(void)
 {

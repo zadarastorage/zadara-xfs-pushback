@@ -188,10 +188,9 @@ static int desc_list_init(struct net_device *dev)
 
 		/* allocate a new skb for next time receive */
 		new_skb = netdev_alloc_skb(dev, PKT_BUF_SZ + NET_IP_ALIGN);
-		if (!new_skb) {
-			pr_notice("init: low on mem - packet dropped\n");
+		if (!new_skb)
 			goto init_error;
-		}
+
 		skb_reserve(new_skb, NET_IP_ALIGN);
 		/* Invidate the data cache of skb->data range when it is write back
 		 * cache. It will prevent overwritting the new data from DMA
@@ -308,11 +307,6 @@ static int bfin_mdiobus_write(struct mii_bus *bus, int phy_addr, int regnum,
 	return bfin_mdio_poll();
 }
 
-static int bfin_mdiobus_reset(struct mii_bus *bus)
-{
-	return 0;
-}
-
 static void bfin_mac_adjust_link(struct net_device *dev)
 {
 	struct bfin_mac_local *lp = netdev_priv(dev);
@@ -425,8 +419,8 @@ static int mii_probe(struct net_device *dev, int phy_mode)
 		return -EINVAL;
 	}
 
-	phydev = phy_connect(dev, dev_name(&phydev->dev), &bfin_mac_adjust_link,
-			0, phy_mode);
+	phydev = phy_connect(dev, dev_name(&phydev->dev),
+			     &bfin_mac_adjust_link, phy_mode);
 
 	if (IS_ERR(phydev)) {
 		netdev_err(dev, "could not attach PHY\n");
@@ -498,10 +492,10 @@ bfin_mac_ethtool_setsettings(struct net_device *dev, struct ethtool_cmd *cmd)
 static void bfin_mac_ethtool_getdrvinfo(struct net_device *dev,
 					struct ethtool_drvinfo *info)
 {
-	strcpy(info->driver, KBUILD_MODNAME);
-	strcpy(info->version, DRV_VERSION);
-	strcpy(info->fw_version, "N/A");
-	strcpy(info->bus_info, dev_name(&dev->dev));
+	strlcpy(info->driver, KBUILD_MODNAME, sizeof(info->driver));
+	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strlcpy(info->fw_version, "N/A", sizeof(info->fw_version));
+	strlcpy(info->bus_info, dev_name(&dev->dev), sizeof(info->bus_info));
 }
 
 static void bfin_mac_ethtool_getwol(struct net_device *dev,
@@ -531,7 +525,7 @@ static int bfin_mac_ethtool_setwol(struct net_device *dev,
 	if (lp->wol && !lp->irq_wake_requested) {
 		/* register wake irq handler */
 		rc = request_irq(IRQ_MAC_WAKEDET, bfin_mac_wake_interrupt,
-				 IRQF_DISABLED, "EMAC_WAKE", dev);
+				 0, "EMAC_WAKE", dev);
 		if (rc)
 			return rc;
 		lp->irq_wake_requested = true;
@@ -647,7 +641,6 @@ static int bfin_mac_set_mac_address(struct net_device *dev, void *p)
 	if (netif_running(dev))
 		return -EBUSY;
 	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
-	dev->addr_assign_type &= ~NET_ADDR_RANDOM;
 	setup_mac_addr(dev->dev_addr);
 	return 0;
 }
@@ -669,8 +662,8 @@ static u32 bfin_select_phc_clock(u32 input_clk, unsigned int *shift_result)
 	return 1000000000UL / ppn;
 }
 
-static int bfin_mac_hwtstamp_ioctl(struct net_device *netdev,
-		struct ifreq *ifr, int cmd)
+static int bfin_mac_hwtstamp_set(struct net_device *netdev,
+				 struct ifreq *ifr)
 {
 	struct hwtstamp_config config;
 	struct bfin_mac_local *lp = netdev_priv(netdev);
@@ -823,6 +816,16 @@ static int bfin_mac_hwtstamp_ioctl(struct net_device *netdev,
 
 	lp->stamp_cfg = config;
 	return copy_to_user(ifr->ifr_data, &config, sizeof(config)) ?
+		-EFAULT : 0;
+}
+
+static int bfin_mac_hwtstamp_get(struct net_device *netdev,
+				 struct ifreq *ifr)
+{
+	struct bfin_mac_local *lp = netdev_priv(netdev);
+
+	return copy_to_user(ifr->ifr_data, &lp->stamp_cfg,
+			    sizeof(lp->stamp_cfg)) ?
 		-EFAULT : 0;
 }
 
@@ -1032,6 +1035,7 @@ static struct ptp_clock_info bfin_ptp_caps = {
 	.n_alarm	= 0,
 	.n_ext_ts	= 0,
 	.n_per_out	= 0,
+	.n_pins		= 0,
 	.pps		= 0,
 	.adjfreq	= bfin_ptp_adjfreq,
 	.adjtime	= bfin_ptp_adjtime,
@@ -1064,7 +1068,8 @@ static void bfin_phc_release(struct bfin_mac_local *lp)
 #else
 # define bfin_mac_hwtstamp_is_none(cfg) 0
 # define bfin_mac_hwtstamp_init(dev)
-# define bfin_mac_hwtstamp_ioctl(dev, ifr, cmd) (-EOPNOTSUPP)
+# define bfin_mac_hwtstamp_set(dev, ifr) (-EOPNOTSUPP)
+# define bfin_mac_hwtstamp_get(dev, ifr) (-EOPNOTSUPP)
 # define bfin_rx_hwtstamp(dev, skb)
 # define bfin_tx_hwtstamp(dev, skb)
 # define bfin_phc_init(netdev, dev) 0
@@ -1077,7 +1082,7 @@ static inline void _tx_reclaim_skb(void)
 		tx_list_head->desc_a.config &= ~DMAEN;
 		tx_list_head->status.status_word = 0;
 		if (tx_list_head->skb) {
-			dev_kfree_skb(tx_list_head->skb);
+			dev_consume_skb_any(tx_list_head->skb);
 			tx_list_head->skb = NULL;
 		}
 		tx_list_head = tx_list_head->next;
@@ -1213,11 +1218,11 @@ out:
 #define RX_ERROR_MASK (RX_LONG | RX_ALIGN | RX_CRC | RX_LEN | \
 	RX_FRAG | RX_ADDR | RX_DMAO | RX_PHY | RX_LATE | RX_RANGE)
 
-static void bfin_mac_rx(struct net_device *dev)
+static void bfin_mac_rx(struct bfin_mac_local *lp)
 {
+	struct net_device *dev = lp->ndev;
 	struct sk_buff *skb, *new_skb;
 	unsigned short len;
-	struct bfin_mac_local *lp __maybe_unused = netdev_priv(dev);
 #if defined(BFIN_MAC_CSUM_OFFLOAD)
 	unsigned int i;
 	unsigned char fcs[ETH_FCS_LEN + 1];
@@ -1237,7 +1242,6 @@ static void bfin_mac_rx(struct net_device *dev)
 
 	new_skb = netdev_alloc_skb(dev, PKT_BUF_SZ + NET_IP_ALIGN);
 	if (!new_skb) {
-		netdev_notice(dev, "rx: low on mem - packet dropped\n");
 		dev->stats.rx_dropped++;
 		goto out;
 	}
@@ -1252,7 +1256,7 @@ static void bfin_mac_rx(struct net_device *dev)
 	current_rx_ptr->skb = new_skb;
 	current_rx_ptr->desc_a.start_addr = (unsigned long)new_skb->data - 2;
 
-	len = (unsigned short)((current_rx_ptr->status.status_word) & RX_FRLEN);
+	len = (unsigned short)(current_rx_ptr->status.status_word & RX_FRLEN);
 	/* Deduce Ethernet FCS length from Ethernet payload length */
 	len -= ETH_FCS_LEN;
 	skb_put(skb, len);
@@ -1290,7 +1294,8 @@ static void bfin_mac_rx(struct net_device *dev)
 	}
 #endif
 
-	netif_rx(skb);
+	napi_gro_receive(&lp->napi, skb);
+
 	dev->stats.rx_packets++;
 	dev->stats.rx_bytes += len;
 out:
@@ -1298,41 +1303,52 @@ out:
 	current_rx_ptr = current_rx_ptr->next;
 }
 
+static int bfin_mac_poll(struct napi_struct *napi, int budget)
+{
+	int i = 0;
+	struct bfin_mac_local *lp = container_of(napi,
+						 struct bfin_mac_local,
+						 napi);
+
+	while (current_rx_ptr->status.status_word != 0 && i < budget) {
+		bfin_mac_rx(lp);
+		i++;
+	}
+
+	if (i < budget) {
+		napi_complete(napi);
+		if (test_and_clear_bit(BFIN_MAC_RX_IRQ_DISABLED, &lp->flags))
+			enable_irq(IRQ_MAC_RX);
+	}
+
+	return i;
+}
+
 /* interrupt routine to handle rx and error signal */
 static irqreturn_t bfin_mac_interrupt(int irq, void *dev_id)
 {
-	struct net_device *dev = dev_id;
-	int number = 0;
+	struct bfin_mac_local *lp = netdev_priv(dev_id);
+	u32 status;
 
-get_one_packet:
-	if (current_rx_ptr->status.status_word == 0) {
-		/* no more new packet received */
-		if (number == 0) {
-			if (current_rx_ptr->next->status.status_word != 0) {
-				current_rx_ptr = current_rx_ptr->next;
-				goto real_rx;
-			}
-		}
-		bfin_write_DMA1_IRQ_STATUS(bfin_read_DMA1_IRQ_STATUS() |
-					   DMA_DONE | DMA_ERR);
-		return IRQ_HANDLED;
+	status = bfin_read_DMA1_IRQ_STATUS();
+
+	bfin_write_DMA1_IRQ_STATUS(status | DMA_DONE | DMA_ERR);
+	if (status & DMA_DONE) {
+		disable_irq_nosync(IRQ_MAC_RX);
+		set_bit(BFIN_MAC_RX_IRQ_DISABLED, &lp->flags);
+		napi_schedule(&lp->napi);
 	}
 
-real_rx:
-	bfin_mac_rx(dev);
-	number++;
-	goto get_one_packet;
+	return IRQ_HANDLED;
 }
 
 #ifdef CONFIG_NET_POLL_CONTROLLER
-static void bfin_mac_poll(struct net_device *dev)
+static void bfin_mac_poll_controller(struct net_device *dev)
 {
 	struct bfin_mac_local *lp = netdev_priv(dev);
 
-	disable_irq(IRQ_MAC_RX);
 	bfin_mac_interrupt(IRQ_MAC_RX, dev);
 	tx_reclaim_skb(lp);
-	enable_irq(IRQ_MAC_RX);
 }
 #endif				/* CONFIG_NET_POLL_CONTROLLER */
 
@@ -1424,14 +1440,13 @@ static void bfin_mac_timeout(struct net_device *dev)
 		tx_list_head = tx_list_head->next;
 	}
 
-	if (netif_queue_stopped(lp->ndev))
-		netif_wake_queue(lp->ndev);
+	if (netif_queue_stopped(dev))
+		netif_wake_queue(dev);
 
 	bfin_mac_enable(lp->phydev);
 
 	/* We can accept TX packets again */
 	dev->trans_start = jiffies; /* prevent tx timeout */
-	netif_wake_queue(dev);
 }
 
 static void bfin_mac_multicast_hash(struct net_device *dev)
@@ -1499,7 +1514,9 @@ static int bfin_mac_ioctl(struct net_device *netdev, struct ifreq *ifr, int cmd)
 
 	switch (cmd) {
 	case SIOCSHWTSTAMP:
-		return bfin_mac_hwtstamp_ioctl(netdev, ifr, cmd);
+		return bfin_mac_hwtstamp_set(netdev, ifr);
+	case SIOCGHWTSTAMP:
+		return bfin_mac_hwtstamp_get(netdev, ifr);
 	default:
 		if (lp->phydev)
 			return phy_mii_ioctl(lp->phydev, ifr, cmd);
@@ -1547,7 +1564,6 @@ static int bfin_mac_open(struct net_device *dev)
 		return ret;
 
 	phy_start(lp->phydev);
-	phy_write(lp->phydev, MII_BMCR, BMCR_RESET);
 	setup_system_regs(dev);
 	setup_mac_addr(dev->dev_addr);
 
@@ -1557,6 +1573,7 @@ static int bfin_mac_open(struct net_device *dev)
 		return ret;
 	pr_debug("hardware init finished\n");
 
+	napi_enable(&lp->napi);
 	netif_start_queue(dev);
 	netif_carrier_on(dev);
 
@@ -1574,6 +1591,7 @@ static int bfin_mac_close(struct net_device *dev)
 	pr_debug("%s: %s\n", dev->name, __func__);
 
 	netif_stop_queue(dev);
+	napi_disable(&lp->napi);
 	netif_carrier_off(dev);
 
 	phy_stop(lp->phydev);
@@ -1599,7 +1617,7 @@ static const struct net_device_ops bfin_mac_netdev_ops = {
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_change_mtu		= eth_change_mtu,
 #ifdef CONFIG_NET_POLL_CONTROLLER
-	.ndo_poll_controller	= bfin_mac_poll,
+	.ndo_poll_controller	= bfin_mac_poll_controller,
 #endif
 };
 
@@ -1650,12 +1668,12 @@ static int bfin_mac_probe(struct platform_device *pdev)
 
 	setup_mac_addr(ndev->dev_addr);
 
-	if (!pdev->dev.platform_data) {
+	if (!dev_get_platdata(&pdev->dev)) {
 		dev_err(&pdev->dev, "Cannot get platform device bfin_mii_bus!\n");
 		rc = -ENODEV;
 		goto out_err_probe_mac;
 	}
-	pd = pdev->dev.platform_data;
+	pd = dev_get_platdata(&pdev->dev);
 	lp->mii_bus = platform_get_drvdata(pd);
 	if (!lp->mii_bus) {
 		dev_err(&pdev->dev, "Cannot get mii_bus!\n");
@@ -1663,7 +1681,7 @@ static int bfin_mac_probe(struct platform_device *pdev)
 		goto out_err_probe_mac;
 	}
 	lp->mii_bus->priv = ndev;
-	mii_bus_data = pd->dev.platform_data;
+	mii_bus_data = dev_get_platdata(&pd->dev);
 
 	rc = mii_probe(ndev, mii_bus_data->phy_mode);
 	if (rc) {
@@ -1674,9 +1692,6 @@ static int bfin_mac_probe(struct platform_device *pdev)
 	lp->vlan1_mask = ETH_P_8021Q | mii_bus_data->vlan1_mask;
 	lp->vlan2_mask = ETH_P_8021Q | mii_bus_data->vlan2_mask;
 
-	/* Fill in the fields of the device structure with ethernet values. */
-	ether_setup(ndev);
-
 	ndev->netdev_ops = &bfin_mac_netdev_ops;
 	ndev->ethtool_ops = &bfin_mac_ethtool_ops;
 
@@ -1684,12 +1699,15 @@ static int bfin_mac_probe(struct platform_device *pdev)
 	lp->tx_reclaim_timer.data = (unsigned long)lp;
 	lp->tx_reclaim_timer.function = tx_reclaim_skb_timeout;
 
+	lp->flags = 0;
+	netif_napi_add(ndev, &lp->napi, bfin_mac_poll, CONFIG_BFIN_RX_DESC_NUM);
+
 	spin_lock_init(&lp->lock);
 
 	/* now, enable interrupts */
 	/* register irq handler */
 	rc = request_irq(IRQ_MAC_RX, bfin_mac_interrupt,
-			IRQF_DISABLED, "EMAC_RX", ndev);
+			0, "EMAC_RX", ndev);
 	if (rc) {
 		dev_err(&pdev->dev, "Cannot request Blackfin MAC RX IRQ!\n");
 		rc = -EBUSY;
@@ -1703,7 +1721,8 @@ static int bfin_mac_probe(struct platform_device *pdev)
 	}
 
 	bfin_mac_hwtstamp_init(ndev);
-	if (bfin_phc_init(ndev, &pdev->dev)) {
+	rc = bfin_phc_init(ndev, &pdev->dev);
+	if (rc) {
 		dev_err(&pdev->dev, "Cannot register PHC device!\n");
 		goto out_err_phc;
 	}
@@ -1717,11 +1736,11 @@ out_err_phc:
 out_err_reg_ndev:
 	free_irq(IRQ_MAC_RX, ndev);
 out_err_request_irq:
+	netif_napi_del(&lp->napi);
 out_err_mii_probe:
 	mdiobus_unregister(lp->mii_bus);
 	mdiobus_free(lp->mii_bus);
 out_err_probe_mac:
-	platform_set_drvdata(pdev, NULL);
 	free_netdev(ndev);
 
 	return rc;
@@ -1734,11 +1753,11 @@ static int bfin_mac_remove(struct platform_device *pdev)
 
 	bfin_phc_release(lp);
 
-	platform_set_drvdata(pdev, NULL);
-
 	lp->mii_bus->priv = NULL;
 
 	unregister_netdev(ndev);
+
+	netif_napi_del(&lp->napi);
 
 	free_irq(IRQ_MAC_RX, ndev);
 
@@ -1816,7 +1835,6 @@ static int bfin_mii_bus_probe(struct platform_device *pdev)
 		goto out_err_alloc;
 	miibus->read = bfin_mdiobus_read;
 	miibus->write = bfin_mdiobus_write;
-	miibus->reset = bfin_mdiobus_reset;
 
 	miibus->parent = &pdev->dev;
 	miibus->name = "bfin_mii_bus";
@@ -1870,7 +1888,6 @@ static int bfin_mii_bus_remove(struct platform_device *pdev)
 	struct bfin_mii_bus_platform_data *mii_bus_pd =
 		dev_get_platdata(&pdev->dev);
 
-	platform_set_drvdata(pdev, NULL);
 	mdiobus_unregister(miibus);
 	kfree(miibus->irq);
 	mdiobus_free(miibus);

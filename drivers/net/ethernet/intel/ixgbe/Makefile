@@ -1,7 +1,7 @@
 ################################################################################
 #
 # Intel 10 Gigabit PCI Express Linux driver
-# Copyright(c) 1999 - 2012 Intel Corporation.
+# Copyright(c) 1999 - 2013 Intel Corporation.
 #
 # This program is free software; you can redistribute it and/or modify it
 # under the terms and conditions of the GNU General Public License,
@@ -42,3 +42,10 @@ ixgbe-$(CONFIG_IXGBE_DCB) +=  ixgbe_dcb.o ixgbe_dcb_82598.o \
 ixgbe-$(CONFIG_IXGBE_HWMON) += ixgbe_sysfs.o
 ixgbe-$(CONFIG_DEBUG_FS) += ixgbe_debugfs.o
 ixgbe-$(CONFIG_FCOE:m=y) += ixgbe_fcoe.o
+
+# Zadara ################
+ifeq ($(CONFIG_ZADARA),y)
+ccflags-y += -DCONFIG_IXGBE_ZADARA
+ccflags-y += -Wall                      # Enable most warning messages
+ccflags-y += -g
+endif

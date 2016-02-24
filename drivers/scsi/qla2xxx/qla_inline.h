@@ -1,9 +1,31 @@
 /*
  * QLogic Fibre Channel HBA Driver
- * Copyright (c)  2003-2012 QLogic Corporation
+ * Copyright (c)  2003-2014 QLogic Corporation
  *
  * See LICENSE.qla2xxx for copyright and licensing details.
  */
+
+/**
+ * qla24xx_calc_iocbs() - Determine number of Command Type 3 and
+ * Continuation Type 1 IOCBs to allocate.
+ *
+ * @dsds: number of data segment decriptors needed
+ *
+ * Returns the number of IOCB entries needed to store @dsds.
+ */
+static inline uint16_t
+qla24xx_calc_iocbs(scsi_qla_host_t *vha, uint16_t dsds)
+{
+	uint16_t iocbs;
+
+	iocbs = 1;
+	if (dsds > 1) {
+		iocbs += (dsds - 1) / 5;
+		if ((dsds - 1) % 5)
+			iocbs++;
+	}
+	return iocbs;
+}
 
 /*
  * qla2x00_debounce_register
@@ -37,7 +59,7 @@ qla2x00_poll(struct rsp_que *rsp)
 	unsigned long flags;
 	struct qla_hw_data *ha = rsp->hw;
 	local_irq_save(flags);
-	if (IS_QLA82XX(ha))
+	if (IS_P3P_TYPE(ha))
 		qla82xx_poll(0, rsp);
 	else
 		ha->isp_ops->intr_handler(0, rsp);
@@ -52,9 +74,20 @@ host_to_fcp_swap(uint8_t *fcp, uint32_t bsize)
        uint32_t iter = bsize >> 2;
 
        for (; iter ; iter--)
-               *ofcp++ = swab32(*ifcp++);
+	       *ofcp++ = swab32(*ifcp++);
 
        return fcp;
+}
+
+static inline void
+host_to_adap(uint8_t *src, uint8_t *dst, uint32_t bsize)
+{
+	uint32_t *isrc = (uint32_t *) src;
+	uint32_t *odest = (uint32_t *) dst;
+	uint32_t iter = bsize >> 2;
+
+	for (; iter ; iter--)
+		*odest++ = cpu_to_le32(*isrc++);
 }
 
 static inline void
@@ -147,7 +180,7 @@ qla2x00_hba_err_chk_enabled(srb_t *sp)
 	case SCSI_PROT_WRITE_INSERT:
 		if (ql2xenablehba_err_chk >= 1)
 			return 1;
-		break;
+	break;
 	case SCSI_PROT_READ_PASS:
 	case SCSI_PROT_WRITE_PASS:
 		if (ql2xenablehba_err_chk >= 2)
@@ -158,19 +191,6 @@ qla2x00_hba_err_chk_enabled(srb_t *sp)
 		return 1;
 	}
 	return 0;
-}
-
-static inline int
-qla2x00_reset_active(scsi_qla_host_t *vha)
-{
-	scsi_qla_host_t *base_vha = pci_get_drvdata(vha->hw->pdev);
-
-	/* Test appropriate base-vha and vha flags. */
-	return test_bit(ISP_ABORT_NEEDED, &base_vha->dpc_flags) ||
-	    test_bit(ABORT_ISP_ACTIVE, &base_vha->dpc_flags) ||
-	    test_bit(ISP_ABORT_RETRY, &base_vha->dpc_flags) ||
-	    test_bit(ISP_ABORT_NEEDED, &vha->dpc_flags) ||
-	    test_bit(ABORT_ISP_ACTIVE, &vha->dpc_flags);
 }
 
 static inline srb_t *
@@ -198,6 +218,13 @@ done:
 }
 
 static inline void
+qla2x00_rel_sp(scsi_qla_host_t *vha, srb_t *sp)
+{
+	mempool_free(sp, vha->hw->srb_mempool);
+	QLA_VHA_MARK_NOT_BUSY(vha);
+}
+
+static inline void
 qla2x00_init_timer(srb_t *sp, unsigned long tmo)
 {
 	init_timer(&sp->u.iocb_cmd.timer);
@@ -206,10 +233,103 @@ qla2x00_init_timer(srb_t *sp, unsigned long tmo)
 	sp->u.iocb_cmd.timer.function = qla2x00_sp_timeout;
 	add_timer(&sp->u.iocb_cmd.timer);
 	sp->free = qla2x00_sp_free;
+	if ((IS_QLAFX00(sp->fcport->vha->hw)) &&
+	    (sp->type == SRB_FXIOCB_DCMD))
+		init_completion(&sp->u.iocb_cmd.u.fxiocb.fxiocb_comp);
+}
+
+static inline int
+qla2x00_reset_active(scsi_qla_host_t *vha)
+{
+	scsi_qla_host_t *base_vha = pci_get_drvdata(vha->hw->pdev);
+
+	/* Test appropriate base-vha and vha flags. */
+	return test_bit(ISP_ABORT_NEEDED, &base_vha->dpc_flags) ||
+	    test_bit(ABORT_ISP_ACTIVE, &base_vha->dpc_flags) ||
+	    test_bit(ISP_ABORT_RETRY, &base_vha->dpc_flags) ||
+	    test_bit(ISP_ABORT_NEEDED, &vha->dpc_flags) ||
+	    test_bit(ABORT_ISP_ACTIVE, &vha->dpc_flags);
 }
 
 static inline int
 qla2x00_gid_list_size(struct qla_hw_data *ha)
 {
-	return sizeof(struct gid_list_info) * ha->max_fibre_devices;
+	if (IS_QLAFX00(ha))
+		return sizeof(uint32_t) * 32;
+	else
+		return sizeof(struct gid_list_info) * ha->max_fibre_devices;
 }
+static inline void
+qla2x00_handle_mbx_completion(struct qla_hw_data *ha, int status)
+{
+	if (test_bit(MBX_INTR_WAIT, &ha->mbx_cmd_flags) &&
+		(status & MBX_INTERRUPT) && ha->flags.mbox_int) {
+		set_bit(MBX_INTERRUPT, &ha->mbx_cmd_flags);
+		clear_bit(MBX_INTR_WAIT, &ha->mbx_cmd_flags);
+		complete(&ha->mbx_intr_comp);
+	}
+}
+
+static inline int
+ql_mask_match(uint32_t level)
+{
+	if (ql2xextended_error_logging == 1)
+		ql2xextended_error_logging = QL_DBG_DEFAULT1_MASK;
+	return (level & ql2xextended_error_logging) == level;
+}
+
+static inline void
+qla2x00_set_retry_delay_timestamp(fc_port_t *fcport, uint16_t retry_delay)
+{
+	if (retry_delay)
+		fcport->retry_delay_timestamp = jiffies +
+		    (retry_delay * HZ / 10);
+}
+
+#ifdef QLA_QRATE
+static inline void
+qla_qr_timer(scsi_qla_host_t *vha)
+{
+	unsigned int io_rate, req_rate, rsp_rate, ind;
+
+	if (!qla_q_rate || !time_after(jiffies, vha->qrate.next_chk))
+		return;
+
+	vha->qrate.next_chk = jiffies + 1 * HZ;
+
+	io_rate  = atomic_read(&vha->qrate.io_rate.value_cur);
+	req_rate = atomic_read(&vha->qrate.req_rate.value_cur);
+	rsp_rate = atomic_read(&vha->qrate.rsp_rate.value_cur);
+
+	atomic_set(&vha->qrate.io_rate.value, io_rate);
+	atomic_set(&vha->qrate.req_rate.value, req_rate);
+	atomic_set(&vha->qrate.rsp_rate.value, rsp_rate);
+
+	atomic_set(&vha->qrate.io_rate.value_cur, 0);
+	atomic_set(&vha->qrate.req_rate.value_cur, 0);
+	atomic_set(&vha->qrate.rsp_rate.value_cur, 0);
+
+	if (QLA_QR_IO_RATE_HIGH(vha) && !vha->qrate.collect_hist) {
+		vha->qrate.collect_hist = 1;
+		vha->qrate.hist_done = 0;
+		vha->qrate.index = 0;
+	}
+
+	if (!vha->qrate.collect_hist || vha->qrate.hist_done)
+		return;
+
+	ind = vha->qrate.index;
+	if (ind >= QLA_QR_NUM_HIST) {
+		vha->qrate.hist_done = 1;
+		return;
+	}
+	vha->qrate.io_rate.hist[ind] = io_rate;
+	vha->qrate.req_rate.hist[ind] = req_rate;
+	vha->qrate.rsp_rate.hist[ind] = rsp_rate;
+	vha->qrate.jiff_hist[ind] = jiffies;
+	smp_mb();
+	vha->qrate.index++;
+}
+#else /* QLA_QRATE */
+static inline void qla_qr_timer(scsi_qla_host_t *vha) {}
+#endif

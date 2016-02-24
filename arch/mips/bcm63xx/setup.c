@@ -20,6 +20,7 @@
 #include <bcm63xx_cpu.h>
 #include <bcm63xx_regs.h>
 #include <bcm63xx_io.h>
+#include <bcm63xx_gpio.h>
 
 void bcm63xx_machine_halt(void)
 {
@@ -68,6 +69,9 @@ void bcm63xx_machine_reboot(void)
 
 	/* mask and clear all external irq */
 	switch (bcm63xx_get_cpu_id()) {
+	case BCM3368_CPU_ID:
+		perf_regs[0] = PERF_EXTIRQ_CFG_REG_3368;
+		break;
 	case BCM6328_CPU_ID:
 		perf_regs[0] = PERF_EXTIRQ_CFG_REG_6328;
 		break;
@@ -82,6 +86,9 @@ void bcm63xx_machine_reboot(void)
 		break;
 	case BCM6358_CPU_ID:
 		perf_regs[0] = PERF_EXTIRQ_CFG_REG_6358;
+		break;
+	case BCM6362_CPU_ID:
+		perf_regs[0] = PERF_EXTIRQ_CFG_REG_6362;
 		break;
 	}
 
@@ -126,7 +133,7 @@ static void __bcm63xx_machine_reboot(char *p)
 const char *get_system_type(void)
 {
 	static char buf[128];
-	snprintf(buf, sizeof(buf), "bcm63xx/%s (0x%04x/0x%04X)",
+	snprintf(buf, sizeof(buf), "bcm63xx/%s (0x%04x/0x%02X)",
 		 board_get_name(),
 		 bcm63xx_get_cpu_id(), bcm63xx_get_cpu_rev());
 	return buf;
@@ -154,7 +161,10 @@ void __init plat_mem_setup(void)
 
 int __init bcm63xx_register_devices(void)
 {
+	/* register gpiochip */
+	bcm63xx_gpio_init();
+
 	return board_register_devices();
 }
 
-device_initcall(bcm63xx_register_devices);
+arch_initcall(bcm63xx_register_devices);

@@ -306,7 +306,7 @@ void __init plat_swiotlb_setup(void)
 		swiotlbsize = 64 * (1<<20);
 	}
 #endif
-#ifdef CONFIG_USB_OCTEON_OHCI
+#ifdef CONFIG_USB_OHCI_HCD_PLATFORM
 	/* OCTEON II ohci is only 32-bit. */
 	if (OCTEON_IS_MODEL(OCTEON_CN6XXX) && max_addr >= 0x100000000ul)
 		swiotlbsize = 64 * (1<<20);
@@ -317,7 +317,8 @@ void __init plat_swiotlb_setup(void)
 
 	octeon_swiotlb = alloc_bootmem_low_pages(swiotlbsize);
 
-	swiotlb_init_with_tbl(octeon_swiotlb, swiotlb_nslabs, 1);
+	if (swiotlb_init_with_tbl(octeon_swiotlb, swiotlb_nslabs, 1) == -ENOMEM)
+		panic("Cannot allocate SWIOTLB buffer");
 
 	mips_dma_map_ops = &octeon_linear_dma_map_ops.dma_map_ops;
 }

@@ -7,20 +7,13 @@
 int test__open_syscall_event_on_all_cpus(void)
 {
 	int err = -1, fd, cpu;
-	struct thread_map *threads;
 	struct cpu_map *cpus;
 	struct perf_evsel *evsel;
-	struct perf_event_attr attr;
 	unsigned int nr_open_calls = 111, i;
 	cpu_set_t cpu_set;
-	int id = trace_event__id("sys_enter_open");
+	struct thread_map *threads = thread_map__new(-1, getpid(), UINT_MAX);
+	char sbuf[STRERR_BUFSIZE];
 
-	if (id < 0) {
-		pr_debug("is debugfs mounted on /sys/kernel/debug?\n");
-		return -1;
-	}
-
-	threads = thread_map__new(-1, getpid(), UINT_MAX);
 	if (threads == NULL) {
 		pr_debug("thread_map__new\n");
 		return -1;
@@ -32,22 +25,18 @@ int test__open_syscall_event_on_all_cpus(void)
 		goto out_thread_map_delete;
 	}
 
-
 	CPU_ZERO(&cpu_set);
 
-	memset(&attr, 0, sizeof(attr));
-	attr.type = PERF_TYPE_TRACEPOINT;
-	attr.config = id;
-	evsel = perf_evsel__new(&attr, 0);
+	evsel = perf_evsel__newtp("syscalls", "sys_enter_open");
 	if (evsel == NULL) {
-		pr_debug("perf_evsel__new\n");
+		pr_debug("is debugfs mounted on /sys/kernel/debug?\n");
 		goto out_thread_map_delete;
 	}
 
 	if (perf_evsel__open(evsel, cpus, threads) < 0) {
 		pr_debug("failed to open counter: %s, "
 			 "tweak /proc/sys/kernel/perf_event_paranoid?\n",
-			 strerror(errno));
+			 strerror_r(errno, sbuf, sizeof(sbuf)));
 		goto out_evsel_delete;
 	}
 
@@ -68,7 +57,7 @@ int test__open_syscall_event_on_all_cpus(void)
 		if (sched_setaffinity(0, sizeof(cpu_set), &cpu_set) < 0) {
 			pr_debug("sched_setaffinity() failed on CPU %d: %s ",
 				 cpus->map[cpu],
-				 strerror(errno));
+				 strerror_r(errno, sbuf, sizeof(sbuf)));
 			goto out_close_fd;
 		}
 		for (i = 0; i < ncalls; ++i) {
@@ -110,6 +99,7 @@ int test__open_syscall_event_on_all_cpus(void)
 		}
 	}
 
+	perf_evsel__free_counts(evsel);
 out_close_fd:
 	perf_evsel__close_fd(evsel, 1, threads->nr);
 out_evsel_delete:

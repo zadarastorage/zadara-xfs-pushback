@@ -5,10 +5,10 @@
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/types.h>
-#include <linux/init.h>
 #include <linux/smp.h>
 
 #include <asm/processor.h>
+#include <asm/tlbflush.h>
 #include <asm/mce.h>
 #include <asm/msr.h>
 
@@ -33,7 +33,7 @@ static void pentium_machine_check(struct pt_regs *regs, long error_code)
 			smp_processor_id());
 	}
 
-	add_taint(TAINT_MACHINE_CHECK);
+	add_taint(TAINT_MACHINE_CHECK, LOCKDEP_NOW_UNRELIABLE);
 }
 
 /* Set up machine check reporting for processors with Intel style MCE: */
@@ -60,7 +60,7 @@ void intel_p5_mcheck_init(struct cpuinfo_x86 *c)
 	       "Intel old style machine check architecture supported.\n");
 
 	/* Enable MCE: */
-	set_in_cr4(X86_CR4_MCE);
+	cr4_set_bits(X86_CR4_MCE);
 	printk(KERN_INFO
 	       "Intel old style machine check reporting enabled on CPU#%d.\n",
 	       smp_processor_id());

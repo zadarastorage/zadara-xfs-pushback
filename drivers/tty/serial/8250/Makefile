@@ -2,9 +2,10 @@
 # Makefile for the 8250 serial device drivers.
 #
 
-obj-$(CONFIG_SERIAL_8250)		+= 8250_core.o
-8250_core-y				:= 8250.o
-8250_core-$(CONFIG_SERIAL_8250_PNP)	+= 8250_pnp.o
+obj-$(CONFIG_SERIAL_8250)		+= 8250.o
+8250-y					:= 8250_core.o
+8250-$(CONFIG_SERIAL_8250_PNP)		+= 8250_pnp.o
+8250-$(CONFIG_SERIAL_8250_DMA)		+= 8250_dma.o
 obj-$(CONFIG_SERIAL_8250_GSC)		+= 8250_gsc.o
 obj-$(CONFIG_SERIAL_8250_PCI)		+= 8250_pci.o
 obj-$(CONFIG_SERIAL_8250_HP300)		+= 8250_hp300.o
@@ -19,3 +20,5 @@ obj-$(CONFIG_SERIAL_8250_HUB6)		+= 8250_hub6.o
 obj-$(CONFIG_SERIAL_8250_FSL)		+= 8250_fsl.o
 obj-$(CONFIG_SERIAL_8250_DW)		+= 8250_dw.o
 obj-$(CONFIG_SERIAL_8250_EM)		+= 8250_em.o
+obj-$(CONFIG_SERIAL_8250_FINTEK)	+= 8250_fintek.o
+obj-$(CONFIG_SERIAL_8250_MT6577)	+= 8250_mtk.o

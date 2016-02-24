@@ -14,6 +14,9 @@
 #ifndef __PLAT_SAMSUNG_GPIO_CORE_H
 #define __PLAT_SAMSUNG_GPIO_CORE_H
 
+/* Bring in machine-local definitions, especially S3C_GPIO_END */
+#include <mach/gpio-samsung.h>
+
 #define GPIOCON_OFF	(0x00)
 #define GPIODAT_OFF	(0x04)
 
@@ -106,7 +109,18 @@ static inline struct samsung_gpio_chip *samsung_gpiolib_getchip(unsigned int chi
 #else
 /* machine specific code should provide samsung_gpiolib_getchip */
 
-#include <mach/gpio-track.h>
+extern struct samsung_gpio_chip s3c24xx_gpios[];
+
+static inline struct samsung_gpio_chip *samsung_gpiolib_getchip(unsigned int pin)
+{
+	struct samsung_gpio_chip *chip;
+
+	if (pin > S3C_GPIO_END)
+		return NULL;
+
+	chip = &s3c24xx_gpios[pin/32];
+	return ((pin - chip->chip.base) < chip->chip.ngpio) ? chip : NULL;
+}
 
 static inline void s3c_gpiolib_track(struct samsung_gpio_chip *chip) { }
 #endif

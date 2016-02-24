@@ -5,7 +5,7 @@
 #include <linux/cdev.h>
 
 /*********** zklog stuff **************************/
-#include "/usr/local/include/zadara-iostat/zklog.h"
+#include <zklog.h>
 extern zklog_tag_t ZKLOG_TAG_AGF;
 extern zklog_tag_t ZKLOG_TAG_BUSY_EXT;
 extern zklog_tag_t ZKLOG_TAG_DISCARD;
@@ -49,6 +49,9 @@ struct zxfs_mount {
 	/* tracks SHUTDOWN_XXX flags */
 	atomic64_t shutdown_flags;
 
+	/* remembers that XFS corruption has been seen at least once since mount */
+	atomic_t corruption_detected;
+
 	/* discard granularity in BBs or 0 */
 	xfs_extlen_t discard_gran_bbs;
 
@@ -58,19 +61,9 @@ struct zxfs_mount {
 	 */
 	atomic_t total_discard_ranges;
 
-	/* for sysfs */
-	struct kobject kobj;
-
 	/* flags */
 	unsigned int is_fs_frozen:1;
 	unsigned int online_discard:1;
-	/*
-	 * zxfs_sysfs_stop() will call kobject_put() on this kobj,
-	 * and the release function will reset kobj_in_use, indicating
-	 * that all users are done with this kobject and we may proceed
-	 * with the unmount.
-	 */
-	unsigned int kobj_in_use:1;
 
 	/*
 	 * VAC is able to set/unset this flag through a IOCTL,
@@ -165,6 +158,7 @@ void xfs_free_perag_rcu_cb(struct rcu_head	*head);
 long xfs_zioctl(struct file	*filp, unsigned int	cmd, void __user *arg);
 
 void zxfs_error(xfs_mount_t *mp, int flags);
+void zxfs_corruption_error(xfs_mount_t *mp);
 
 void zxfs_set_discard_gran(xfs_mount_t *mp);
 void zxfs_mp_init(xfs_mount_t *mp);

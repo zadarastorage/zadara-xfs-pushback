@@ -66,7 +66,7 @@
 #define EDAC_PCI "PCI"
 #define EDAC_DEBUG "DEBUG"
 
-extern const char *edac_mem_types[];
+extern const char * const edac_mem_types[];
 
 #ifdef CONFIG_EDAC_DEBUG
 extern int edac_debug_level;
@@ -453,6 +453,11 @@ extern struct mem_ctl_info *find_mci_by_dev(struct device *dev);
 extern struct mem_ctl_info *edac_mc_del_mc(struct device *dev);
 extern int edac_mc_find_csrow_by_page(struct mem_ctl_info *mci,
 				      unsigned long page);
+
+void edac_raw_mc_handle_error(const enum hw_event_mc_err_type type,
+			      struct mem_ctl_info *mci,
+			      struct edac_raw_error_desc *e);
+
 void edac_mc_handle_error(const enum hw_event_mc_err_type type,
 			  struct mem_ctl_info *mci,
 			  const u16 error_count,

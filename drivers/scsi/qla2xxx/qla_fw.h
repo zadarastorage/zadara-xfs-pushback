@@ -1,6 +1,6 @@
 /*
  * QLogic Fibre Channel HBA Driver
- * Copyright (c)  2003-2012 QLogic Corporation
+ * Copyright (c)  2003-2014 QLogic Corporation
  *
  * See LICENSE.qla2xxx for copyright and licensing details.
  */
@@ -26,6 +26,18 @@
 #define PDO_FORCE_ADISC		BIT_1
 #define PDO_FORCE_PLOGI		BIT_0
 
+#ifdef CONFIG_SCSI_QLA2XXX_TARGET
+struct qla_port23_data {
+	uint8_t port_name[WWN_SIZE];
+	uint16_t loop_id;
+};
+
+struct qla_port24_data {
+	uint8_t port_name[WWN_SIZE];
+	uint16_t loop_id;
+	uint16_t reserved;
+};
+#endif /* CONFIG_SCSI_QLA2XXX_TARGET */
 
 #define	PORT_DATABASE_24XX_SIZE		64
 struct port_database_24xx {
@@ -300,7 +312,8 @@ struct init_cb_24xx {
 	uint32_t prio_request_q_address[2];
 
 	uint16_t msix;
-	uint8_t reserved_2[6];
+	uint16_t msix_atio;
+	uint8_t reserved_2[4];
 
 	uint16_t atio_q_inpointer;
 	uint16_t atio_q_length;
@@ -316,8 +329,8 @@ struct init_cb_24xx {
 	 * BIT 3  = Reserved
 	 * BIT 4  = Enable Target Mode
 	 * BIT 5  = Disable Initiator Mode
-	 * BIT 6  = Reserved
-	 * BIT 7  = Reserved
+	 * BIT 6  = Acquire FA-WWN
+	 * BIT 7  = Enable D-port Diagnostics
 	 *
 	 * BIT 8  = Reserved
 	 * BIT 9  = Non Participating LIP
@@ -370,7 +383,10 @@ struct init_cb_24xx {
 	 * BIT 14 = Data Rate bit 1
 	 * BIT 15 = Data Rate bit 2
 	 * BIT 16 = Enable 75 ohm Termination Select
-	 * BIT 17-31 = Reserved
+	 * BIT 17-28 = Reserved
+	 * BIT 29 = Enable response queue 0 in index shadowing
+	 * BIT 30 = Enable request queue 0 out index shadowing
+	 * BIT 31 = Reserved
 	 */
 	uint32_t firmware_options_3;
 	uint16_t qos;
@@ -563,7 +579,7 @@ struct sts_entry_24xx {
 #define SF_TRANSFERRED_DATA	BIT_11
 #define SF_FCP_RSP_DMA		BIT_0
 
-	uint16_t reserved_2;
+	uint16_t retry_delay;
 	uint16_t scsi_status;		/* SCSI status. */
 #define SS_CONFIRMATION_REQ		BIT_12
 
@@ -661,6 +677,50 @@ struct ct_entry_24xx {
 	uint32_t dseg_1_address[2];	/* Data segment 1 address. */
 	uint32_t dseg_1_len;		/* Data segment 1 length. */
 };
+
+/*
+ * ISP queue - PUREX IOCB entry structure definition
+ */
+#define PUREX_IOCB_TYPE		0x51 /* CT Pass Through IOCB entry */
+typedef struct purex_entry_24xx {
+	uint8_t entry_type;		/* Entry type. */
+	uint8_t entry_count;		/* Entry count. */
+	uint8_t sys_define;		/* System defined. */
+	uint8_t entry_status;		/* Entry Status. */
+
+	uint16_t reserved1;
+	uint8_t vp_idx;
+	uint8_t reserved2;
+
+	uint16_t status_flags;
+	uint16_t nport_handle;
+
+	uint16_t frame_size;
+	uint16_t trunc_frame_size;
+
+	uint32_t rx_xchg_addr;
+
+	uint8_t d_id[3];
+	uint8_t r_ctl;
+
+	uint8_t s_id[3];
+	uint8_t cs_ctl;
+
+	uint8_t f_ctl[3];
+	uint8_t type;
+
+	uint16_t seq_cnt;
+	uint8_t df_ctl;
+	uint8_t seq_id;
+
+	uint16_t rx_id;
+	uint16_t ox_id;
+	uint32_t param;
+
+	uint8_t els_frame_payload[20];
+} purex_entry_24xx_t;
+
+#define PUREX_ENTRY_SIZE	(sizeof(purex_entry_24xx_t))
 
 /*
  * ISP queue - ELS Pass-Through entry structure definition.
@@ -1034,6 +1094,8 @@ struct device_reg_24xx {
 #define GPDX_LED_YELLOW_ON	BIT_2
 #define GPDX_LED_GREEN_ON	BIT_3
 #define GPDX_LED_AMBER_ON	BIT_4
+#define GPDX_LASER_MASK		BIT_22
+#define GPDX_LASER_DISABLE	BIT_6
 					/* Data in/out. */
 #define GPDX_DATA_INOUT		(BIT_1|BIT_0)
 
@@ -1133,7 +1195,7 @@ struct device_reg_24xx {
 #define MIN_MULTI_ID_FABRIC	64	/* Must be power-of-2. */
 #define MAX_MULTI_ID_FABRIC	256	/* ... */
 
-#define for_each_mapped_vp_idx(_ha, _idx)		\
+#define for_each_mapped_vp_idx(_ha, _idx)			\
 	for (_idx = find_next_bit((_ha)->vp_idx_map,	\
 		(_ha)->max_npiv_vports + 1, 1);		\
 	    _idx <= (_ha)->max_npiv_vports;		\
@@ -1238,6 +1300,7 @@ struct vp_config_entry_24xx {
 #define CS_VF_BIND_VPORTS_TO_VF         BIT_0
 #define CS_VF_SET_QOS_OF_VPORTS         BIT_1
 #define CS_VF_SET_HOPS_OF_VPORTS        BIT_2
+#define CS_VF_FORMAT_1			(1 << 4)
 
 	uint16_t comp_status;		/* Completion status. */
 #define CS_VCT_STS_ERROR	0x01	/* Specified VPs were not disabled. */
@@ -1249,6 +1312,7 @@ struct vp_config_entry_24xx {
 	uint8_t command;
 #define VCT_COMMAND_MOD_VPS     0x00    /* Modify VP configurations. */
 #define VCT_COMMAND_MOD_ENABLE_VPS 0x01 /* Modify configuration & enable VPs. */
+#define VCT_COMMAND_MOD_MDFY_VP_VF 0x04 /* Modify VP for a VF. */
 
 	uint8_t vp_count;
 
@@ -1256,8 +1320,13 @@ struct vp_config_entry_24xx {
 	uint8_t vp_index2;
 
 	uint8_t options_idx1;
+#define VCT_OPTIONS_ACQUIRE_ID		BIT_3
+#define VCT_OPTIONS_ENABLE_INI_MODE	BIT_4
+#define VCT_OPTIONS_DISABLE_TGT_MODE	BIT_5
+#define VCT_OPTIONS_EN_SNS_SCR_FOR_VP	BIT_6
 	uint8_t hard_address_idx1;
-	uint16_t reserved_vp1;
+	uint8_t atio_q;
+	uint8_t vf_num;
 	uint8_t port_name_idx1[WWN_SIZE];
 	uint8_t node_name_idx1[WWN_SIZE];
 
@@ -1296,27 +1365,27 @@ struct vp_rpt_id_entry_24xx {
 
 #define VF_EVFP_IOCB_TYPE       0x26    /* Exchange Virtual Fabric Parameters entry. */
 struct vf_evfp_entry_24xx {
-        uint8_t entry_type;             /* Entry type. */
-        uint8_t entry_count;            /* Entry count. */
-        uint8_t sys_define;             /* System defined. */
-        uint8_t entry_status;           /* Entry Status. */
+	uint8_t entry_type;             /* Entry type. */
+	uint8_t entry_count;            /* Entry count. */
+	uint8_t sys_define;             /* System defined. */
+	uint8_t entry_status;           /* Entry Status. */
 
-        uint32_t handle;                /* System handle. */
-        uint16_t comp_status;           /* Completion status. */
-        uint16_t timeout;               /* timeout */
-        uint16_t adim_tagging_mode;
+	uint32_t handle;                /* System handle. */
+	uint16_t comp_status;           /* Completion status. */
+	uint16_t timeout;               /* timeout */
+	uint16_t adim_tagging_mode;
 
-        uint16_t vfport_id;
-        uint32_t exch_addr;
+	uint16_t vfport_id;
+	uint32_t exch_addr;
 
-        uint16_t nport_handle;          /* N_PORT handle. */
-        uint16_t control_flags;
-        uint32_t io_parameter_0;
-        uint32_t io_parameter_1;
-        uint32_t tx_address[2];         /* Data segment 0 address. */
-        uint32_t tx_len;                /* Data segment 0 length. */
-        uint32_t rx_address[2];         /* Data segment 1 address. */
-        uint32_t rx_len;                /* Data segment 1 length. */
+	uint16_t nport_handle;          /* N_PORT handle. */
+	uint16_t control_flags;
+	uint32_t io_parameter_0;
+	uint32_t io_parameter_1;
+	uint32_t tx_address[2];         /* Data segment 0 address. */
+	uint32_t tx_len;                /* Data segment 0 length. */
+	uint32_t rx_address[2];         /* Data segment 1 address. */
+	uint32_t rx_len;                /* Data segment 1 length. */
 };
 
 /* END MID Support ***********************************************************/
@@ -1377,6 +1446,10 @@ struct qla_flt_header {
 #define FLT_REG_NVRAM_0		0x15
 #define FLT_REG_VPD_1		0x16
 #define FLT_REG_NVRAM_1		0x17
+#define FLT_REG_VPD_2		0xD4
+#define FLT_REG_NVRAM_2		0xD5
+#define FLT_REG_VPD_3		0xD6
+#define FLT_REG_NVRAM_3		0xD7
 #define FLT_REG_FDT		0x1a
 #define FLT_REG_FLT		0x1c
 #define FLT_REG_HW_EVENT_0	0x1d
@@ -1386,10 +1459,10 @@ struct qla_flt_header {
 #define FLT_REG_GOLD_FW		0x2f
 #define FLT_REG_FCP_PRIO_0	0x87
 #define FLT_REG_FCP_PRIO_1	0x88
+#define FLT_REG_CNA_FW		0x97
+#define FLT_REG_BOOT_CODE_8044	0xA2
 #define FLT_REG_FCOE_FW		0xA4
-#define FLT_REG_FCOE_VPD_0	0xA9
 #define FLT_REG_FCOE_NVRAM_0	0xAA
-#define FLT_REG_FCOE_VPD_1	0xAB
 #define FLT_REG_FCOE_NVRAM_1	0xAC
 
 struct qla_flt_region {
@@ -1552,7 +1625,9 @@ struct access_chip_rsp_84xx {
 #define MBA_IDC_NOTIFY		0x8101
 #define MBA_IDC_TIME_EXT	0x8102
 
+#define MBC_IDC_REQUEST		0x100
 #define MBC_IDC_ACK		0x101
+#define MBC_IDC_TIME_EXTEND	0x102
 #define MBC_RESTART_MPI_FW	0x3d
 #define MBC_FLASH_ACCESS_CTRL	0x3e	/* Control flash access. */
 #define MBC_GET_XGMAC_STATS	0x7a
@@ -1949,5 +2024,35 @@ struct qla_fcp_prio_cfg {
 
 /* 83XX Flash locations -- occupies second 8MB region. */
 #define FA_FLASH_LAYOUT_ADDR_83	0xFC400
+
+#define GET_MASK_VAL32(__val, __mask, __off) \
+	(((__val) >> (__off)) & (__mask))
+#define SET_MASK_VAL32(__set, __mask, __off) \
+	(((__set) & (__mask)) << (__off))
+
+#define QLA_TOTAL_VP_PER_F	128
+#define QLA_MAX_VP_PER_F	1
+#define QLA_MAX_NPORT_PER_F	64
+#define QLA_MAX_QSET_PER_F	2
+#define PG_LOCAL_SIZE		32	/* pages */
+#define PG_NUM_SYS_PAGE		0	/* 0 => 128 */
+#define PG_LOCAL_ENABLE_BIT	31
+#define PG_DECODE_SYS_PAGE_MASK	0x7
+#define PG_DECODE_SYS_PAGE_SHIFT	24
+#define PG_DECODE_LOC_PAGE_MASK	0xffff
+#define PG_DECODE_LOC_PAGE_SHIFT	0
+
+struct qla_vf_cfg_ctrl_block {
+	uint32_t	trusted_vf_mask0;
+	uint32_t	trusted_vf_mask32;
+	uint32_t	trusted_vf_mask64;
+	uint32_t	trusted_vf_mask96;
+	uint16_t	total_vp_per_f;		/* For all VFs and PFs */
+	uint16_t	max_vp_per_f;		/* VP per VF and PF */
+	uint16_t	max_nport_per_f;	/* Nport per VF and PF */
+	uint16_t	max_qset_per_f;		/* Queue Set per VF and PF */
+	uint32_t	page_decode;
+	uint8_t		reserved[36];
+};
 
 #endif

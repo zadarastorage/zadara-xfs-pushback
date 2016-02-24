@@ -171,7 +171,7 @@ static int mpc85xx_l2ctlr_of_remove(struct platform_device *dev)
 	return 0;
 }
 
-static struct of_device_id mpc85xx_l2ctlr_of_match[] = {
+static const struct of_device_id mpc85xx_l2ctlr_of_match[] = {
 	{
 		.compatible = "fsl,p2020-l2-cache-controller",
 	},
@@ -203,6 +203,7 @@ static struct of_device_id mpc85xx_l2ctlr_of_match[] = {
 	{	.compatible = "fsl,p1024-l2-cache-controller",},
 	{	.compatible = "fsl,p1015-l2-cache-controller",},
 	{	.compatible = "fsl,p1010-l2-cache-controller",},
+	{	.compatible = "fsl,bsc9131-l2-cache-controller",},
 	{},
 };
 

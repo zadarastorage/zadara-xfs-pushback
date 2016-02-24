@@ -227,11 +227,11 @@ snd_vortex_pcm_hw_params(struct snd_pcm_substream *substream,
 	err =
 	    snd_pcm_lib_malloc_pages(substream, params_buffer_bytes(hw_params));
 	if (err < 0) {
-		printk(KERN_ERR "Vortex: pcm page alloc failed!\n");
+		pr_err( "Vortex: pcm page alloc failed!\n");
 		return err;
 	}
 	/*
-	   printk(KERN_INFO "Vortex: periods %d, period_bytes %d, channels = %d\n", params_periods(hw_params),
+	   pr_info( "Vortex: periods %d, period_bytes %d, channels = %d\n", params_periods(hw_params),
 	   params_period_bytes(hw_params), params_channels(hw_params));
 	 */
 	spin_lock_irq(&chip->lock);
@@ -371,7 +371,7 @@ static int snd_vortex_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 		}
 #ifndef CHIP_AU8810
 		else {
-			printk(KERN_INFO "vortex: wt start %d\n", dma);
+			pr_info( "vortex: wt start %d\n", dma);
 			vortex_wtdma_startfifo(chip, dma);
 		}
 #endif
@@ -384,7 +384,7 @@ static int snd_vortex_pcm_trigger(struct snd_pcm_substream *substream, int cmd)
 			vortex_adbdma_stopfifo(chip, dma);
 #ifndef CHIP_AU8810
 		else {
-			printk(KERN_INFO "vortex: wt stop %d\n", dma);
+			pr_info( "vortex: wt stop %d\n", dma);
 			vortex_wtdma_stopfifo(chip, dma);
 		}
 #endif
@@ -649,6 +649,29 @@ static int snd_vortex_new_pcm(vortex_t *chip, int idx, int nr)
 	snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV_SG,
 					      snd_dma_pci_data(chip->pci_dev),
 					      0x10000, 0x10000);
+
+	switch (VORTEX_PCM_TYPE(pcm)) {
+	case VORTEX_PCM_ADB:
+		err = snd_pcm_add_chmap_ctls(pcm, SNDRV_PCM_STREAM_PLAYBACK,
+					     snd_pcm_std_chmaps,
+					     VORTEX_IS_QUAD(chip) ? 4 : 2,
+					     0, NULL);
+		if (err < 0)
+			return err;
+		err = snd_pcm_add_chmap_ctls(pcm, SNDRV_PCM_STREAM_CAPTURE,
+					     snd_pcm_std_chmaps, 2, 0, NULL);
+		if (err < 0)
+			return err;
+		break;
+#ifdef CHIP_AU8830
+	case VORTEX_PCM_A3D:
+		err = snd_pcm_add_chmap_ctls(pcm, SNDRV_PCM_STREAM_PLAYBACK,
+					     snd_pcm_std_chmaps, 1, 0, NULL);
+		if (err < 0)
+			return err;
+		break;
+#endif
+	}
 
 	if (VORTEX_PCM_TYPE(pcm) == VORTEX_PCM_SPDIF) {
 		for (i = 0; i < ARRAY_SIZE(snd_vortex_mixer_spdif); i++) {

@@ -28,7 +28,7 @@ static int edac_set_debug_level(const char *buf, struct kernel_param *kp)
 	if (ret)
 		return ret;
 
-	if (val < 0 || val > 4)
+	if (val > 4)
 		return -EINVAL;
 
 	return param_set_int(buf, kp);
@@ -146,7 +146,7 @@ static void __exit edac_exit(void)
 /*
  * Inform the kernel of our entry and exit points
  */
-module_init(edac_init);
+subsys_initcall(edac_init);
 module_exit(edac_exit);
 
 MODULE_LICENSE("GPL");

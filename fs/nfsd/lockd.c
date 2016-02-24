@@ -11,6 +11,10 @@
 #include "nfsd.h"
 #include "vfs.h"
 
+#ifdef CONFIG_NFSD_ZADARA
+#include "zstats.h"
+#endif
+
 #define NFSDDBG_FACILITY		NFSDDBG_LOCKD
 
 #ifdef CONFIG_LOCKD_V4
@@ -28,6 +32,9 @@ nlm_fopen(struct svc_rqst *rqstp, struct nfs_fh *f, struct file **filp)
 {
 	__be32		nfserr;
 	struct svc_fh	fh;
+#ifdef CONFIG_NFSD_ZADARA
+	unsigned long start_time = 0;
+#endif
 
 	/* must initialize before using! but maxsize doesn't matter */
 	fh_init(&fh,0);
@@ -35,7 +42,17 @@ nlm_fopen(struct svc_rqst *rqstp, struct nfs_fh *f, struct file **filp)
 	memcpy((char*)&fh.fh_handle.fh_base, f->data, f->size);
 	fh.fh_export = NULL;
 
+#ifdef CONFIG_NFSD_ZADARA
+	start_time = zstats_svc_rqst_start(rqstp);
+#endif
+
 	nfserr = nfsd_open(rqstp, &fh, S_IFREG, NFSD_MAY_LOCK, filp);
+
+#ifdef CONFIG_NFSD_ZADARA
+	/* Unfortunately nlm_fclose doesn't accept rqstp, so we have to finish request here */
+	zstats_svc_rqst_end(rqstp, nfserr, start_time);
+#endif
+
 	fh_put(&fh);
  	/* We return nlm error codes as nlm doesn't know
 	 * about nfsd, but nfsd does know about nlm..

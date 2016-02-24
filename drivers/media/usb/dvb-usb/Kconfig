@@ -117,10 +117,12 @@ config DVB_USB_CXUSB
 	select DVB_TUNER_DIB0070 if MEDIA_SUBDRV_AUTOSELECT
 	select DVB_ATBM8830 if MEDIA_SUBDRV_AUTOSELECT
 	select DVB_LGS8GXX if MEDIA_SUBDRV_AUTOSELECT
+	select DVB_SI2168 if MEDIA_SUBDRV_AUTOSELECT
 	select MEDIA_TUNER_SIMPLE if MEDIA_SUBDRV_AUTOSELECT
 	select MEDIA_TUNER_XC2028 if MEDIA_SUBDRV_AUTOSELECT
 	select MEDIA_TUNER_MXL5005S if MEDIA_SUBDRV_AUTOSELECT
 	select MEDIA_TUNER_MAX2165 if MEDIA_SUBDRV_AUTOSELECT
+	select MEDIA_TUNER_SI2157 if MEDIA_SUBDRV_AUTOSELECT
 	help
 	  Say Y here to support the Conexant USB2.0 hybrid reference design.
 	  Currently, only DVB and ATSC modes are supported, analog mode
@@ -128,6 +130,7 @@ config DVB_USB_CXUSB
 
 	  Medion MD95700 hybrid USB2.0 device.
 	  DViCO FusionHDTV (Bluebird) USB2.0 devices
+	  TechnoTrend TVStick CT2-4400 and CT2-4650 CI devices
 
 config DVB_USB_M920X
 	tristate "Uli m920x DVB-T USB2.0 support"
@@ -202,8 +205,12 @@ config DVB_USB_TTUSB2
 	select DVB_TDA10086 if MEDIA_SUBDRV_AUTOSELECT
 	select DVB_LNBP21 if MEDIA_SUBDRV_AUTOSELECT
 	select DVB_TDA826X if MEDIA_SUBDRV_AUTOSELECT
+	select DVB_TDA10023 if MEDIA_SUBDRV_AUTOSELECT
+	select DVB_TDA10048 if MEDIA_SUBDRV_AUTOSELECT
+	select MEDIA_TUNER_TDA827X if MEDIA_SUBDRV_AUTOSELECT
 	help
-	  Say Y here to support the Pinnacle 400e DVB-S USB2.0 receiver. The
+	  Say Y here to support the Pinnacle 400e DVB-S USB2.0 receiver and
+	  the TechnoTrend CT-3650 CI DVB-C/T USB2.0 receiver. The
 	  firmware protocol used by this module is similar to the one used by the
 	  old ttusb-driver - that's why the module is called dvb-usb-ttusb2.
 
@@ -267,9 +274,11 @@ config DVB_USB_DW2102
 	select DVB_MT312 if MEDIA_SUBDRV_AUTOSELECT
 	select DVB_ZL10039 if MEDIA_SUBDRV_AUTOSELECT
 	select DVB_DS3000 if MEDIA_SUBDRV_AUTOSELECT
+	select DVB_TS2020 if MEDIA_SUBDRV_AUTOSELECT
 	select DVB_STB6100 if MEDIA_SUBDRV_AUTOSELECT
 	select DVB_STV6110 if MEDIA_SUBDRV_AUTOSELECT
 	select DVB_STV0900 if MEDIA_SUBDRV_AUTOSELECT
+	select DVB_M88RS2000 if MEDIA_SUBDRV_AUTOSELECT
 	help
 	  Say Y here to support the DvbWorld, TeVii, Prof DVB-S/S2 USB2.0
 	  receivers.
