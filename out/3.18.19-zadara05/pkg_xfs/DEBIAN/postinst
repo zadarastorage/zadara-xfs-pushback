@@ -1,7 +1,0 @@
-#!/bin/sh
-set -e
-
-if [ "$1" = "configure" ]; then
-	depmod -aq 3.18.19-zadara05
-	update-initramfs -u -k 3.18.19-zadara05
-fi

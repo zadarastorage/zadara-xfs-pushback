@@ -1,7 +1,0 @@
-#!/bin/sh
-set -e
-
-if [ "$1" = "configure" ]; then
-	depmod -a
-	update-initramfs -u
-fi
